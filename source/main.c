@@ -1,70 +1,127 @@
-/* clear.c ... */
-
-/*
- * This example code creates an SDL window and renderer, and then clears the
- * window to a different color every frame, so you'll effectively get a window
- * that's smoothly fading between colors.
- *
- * This code is public domain. Feel free to use it for any purpose!
- */
-
-#define SDL_MAIN_USE_CALLBACKS 1  /* use the callbacks instead of main() */
+#define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#include <stdlib.h>
 
-/* We will use this renderer to draw into this window every frame. */
+typedef struct{
+    int width;
+    int height;
+    void *pixels;
+    SDL_Texture *texture;
+} RenderBuffer;
+
+void SDLResizeRenderBuffer(int Width, int Height);
+
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
+static RenderBuffer buffer = {0};
+static bool isWhite = true;
 
-/* This function runs once at startup. */
-SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
-{
-    SDL_SetAppMetadata("Example Renderer Clear", "1.0", "com.example.renderer-clear");
-
+// --- Called once at startup ---
+SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
+    int init_height = 480;
+    int init_width = 640;
     if (!SDL_Init(SDL_INIT_VIDEO)) {
-        SDL_Log("Couldn't initialize SDL: %s", SDL_GetError());
+        SDL_Log("Failed to init SDL: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
-
-    if (!SDL_CreateWindowAndRenderer("examples/renderer/clear", 640, 480, SDL_WINDOW_RESIZABLE, &window, &renderer)) {
-        SDL_Log("Couldn't create window/renderer: %s", SDL_GetError());
-        return SDL_APP_FAILURE;
-    }
-    SDL_SetRenderLogicalPresentation(renderer, 640, 480, SDL_LOGICAL_PRESENTATION_LETTERBOX);
-
-    return SDL_APP_CONTINUE;  /* carry on with the program! */
+    
+    window = SDL_CreateWindow("Handmade Hero", init_width, init_height, SDL_WINDOW_RESIZABLE);
+    renderer = SDL_CreateRenderer(window, NULL);
+    
+    SDLResizeRenderBuffer(init_width, init_height);
+    
+    SDL_Log("✅ SDL initialized and window created");
+    return SDL_APP_CONTINUE;
 }
 
-/* This function runs when a new event (mouse input, keypresses, etc) occurs. */
+// --- Called every time there’s an event (key press, mouse, etc.) ---
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 {
-    if (event->type == SDL_EVENT_QUIT) {
-        return SDL_APP_SUCCESS;  /* end the program, reporting success to the OS. */
+    switch(event->type){
+        case SDL_EVENT_MOUSE_MOTION:{
+
+        }
+        break;
+        case SDL_EVENT_QUIT:{
+            return SDL_APP_SUCCESS;
+        }
+        break;
+        case SDL_EVENT_WINDOW_RESIZED:{
+            int width = event->window.data1;
+            int height = event->window.data2;
+            SDLResizeRenderBuffer(width, height);
+        }
+        break;
+        default:{
+            return SDL_APP_CONTINUE;
+        }
     }
-    return SDL_APP_CONTINUE;  /* carry on with the program! */
+    return SDL_APP_CONTINUE;
 }
 
-/* This function runs once per frame, and is the heart of the program. */
+// --- Called once per frame (your main loop logic goes here) ---
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
-    const double now = ((double)SDL_GetTicks()) / 1000.0;  /* convert from milliseconds to seconds. */
-    /* choose the color for the frame we will draw. The sine wave trick makes it fade between colors smoothly. */
-    const float red = (float) (0.5 + 0.5 * SDL_sin(now));
-    const float green = (float) (0.5 + 0.5 * SDL_sin(now + SDL_PI_D * 2 / 3));
-    const float blue = (float) (0.5 + 0.5 * SDL_sin(now + SDL_PI_D * 4 / 3));
-    SDL_SetRenderDrawColorFloat(renderer, red, green, blue, SDL_ALPHA_OPAQUE_FLOAT);  /* new color, full alpha. */
+    static Uint32 start_time = 0;
+    if (start_time == 0)
+        start_time = SDL_GetTicks();
 
-    /* clear the window to the draw color. */
-    SDL_RenderClear(renderer);
+    // Exit automatically after 5 seconds
+    if (SDL_GetTicks() - start_time > 10000) {
+        SDL_Log("⏱ Timeout reached, exiting...");
+        return SDL_APP_SUCCESS;
+    }
 
-    /* put the newly-cleared rendering on the screen. */
+    SDL_UpdateTexture(buffer.texture, NULL, buffer.pixels, buffer.width * 4);
+    // (buffer.width * 4 ) = how far to move in memory from one row of pixels to the next.
+    SDL_RenderTexture(renderer, buffer.texture, NULL, NULL);
     SDL_RenderPresent(renderer);
-
-    return SDL_APP_CONTINUE;  /* carry on with the program! */
+    return SDL_APP_CONTINUE;
 }
 
-/* This function runs once at shutdown. */
+// --- Called once on shutdown ---
 void SDL_AppQuit(void *appstate, SDL_AppResult result)
 {
-    /* SDL will clean up the window/renderer for us. */
+    SDL_Log("🧹 Cleaning up...");
+    SDL_DestroyTexture(buffer.texture);
+    if(buffer.pixels){
+        free(buffer.pixels);
+    }
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+}
+
+void SDLResizeRenderBuffer(int width, int height){
+    
+    // Free old buffer if it exists
+    if (buffer.pixels) {
+        free(buffer.pixels);
+        buffer.pixels = NULL;
+    }
+    // clear old texture
+    if (buffer.texture) {
+        SDL_DestroyTexture(buffer.texture);
+        buffer.texture = NULL;
+    }
+
+    // update the buffer
+    buffer.height = height;
+    buffer.width = width;
+
+    // allocate space for pixels
+    buffer.pixels = malloc(width * height * 4); // 4 bytes per pixel
+    memset(buffer.pixels, 0, width * height * 4);   // set every byte of buffer to black/0
+
+    buffer.texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                         SDL_TEXTUREACCESS_STREAMING,
+                                         width, height);
+
+    if (!buffer.texture) {
+        SDL_Log("⚠️ Failed to recreate texture: %s", SDL_GetError());
+    } else {
+        SDL_Log("📐 Texture recreated: %dx%d", width, height);
+    }
+    
 }
