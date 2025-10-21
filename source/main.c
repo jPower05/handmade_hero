@@ -7,12 +7,13 @@
 typedef struct{
     int width;
     int height;
+    int bytesPerPixel;
     void *pixels;
     SDL_Texture *texture;
 } RenderBuffer;
 
-void SDLResizeRenderBuffer(int Width, int Height);
-void SDLUpdatePixels(uint32_t *pixels, int width, int height, float t);
+void SDLResizeRenderBuffer(RenderBuffer *buffer, int Width, int Height);
+void SDLUpdatePixels(RenderBuffer *buffer,float t);
 
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
@@ -29,9 +30,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
     }
     
     window = SDL_CreateWindow("Handmade Hero", init_width, init_height, SDL_WINDOW_RESIZABLE);
+
     renderer = SDL_CreateRenderer(window, NULL);
     
-    SDLResizeRenderBuffer(init_width, init_height);
+    SDLResizeRenderBuffer(&buffer, init_width, init_height);
     
     SDL_Log("✅ SDL initialized and window created");
     return SDL_APP_CONTINUE;
@@ -52,7 +54,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         case SDL_EVENT_WINDOW_RESIZED:{
             int width = event->window.data1;
             int height = event->window.data2;
-            SDLResizeRenderBuffer(width, height);
+            SDLResizeRenderBuffer(&buffer, width, height);
         }
         break;
         default:{
@@ -78,7 +80,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         return SDL_APP_SUCCESS;
     }
 
-    SDLUpdatePixels(buffer.pixels, buffer.width, buffer.height, t);
+    SDLUpdatePixels(&buffer, t);
 
     SDL_UpdateTexture(buffer.texture, NULL, buffer.pixels, buffer.width * 4);
     // (buffer.width * 4 ) = how far to move in memory from one row of pixels to the next.
@@ -88,65 +90,79 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 }
 
 // --- Called once on shutdown ---
-void SDL_AppQuit(void *appstate, SDL_AppResult result)
-{
+void SDL_AppQuit(void *appstate, SDL_AppResult result){
     SDL_Log("🧹 Cleaning up...");
-    SDL_DestroyTexture(buffer.texture);
-    if(buffer.pixels){
-        free(buffer.pixels);
-    }
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-}
-
-void SDLResizeRenderBuffer(int width, int height){
-    
-    // Free old buffer if it exists
-    if (buffer.pixels) {
-        free(buffer.pixels);
-        buffer.pixels = NULL;
-    }
-    // clear old texture
     if (buffer.texture) {
         SDL_DestroyTexture(buffer.texture);
         buffer.texture = NULL;
     }
+    if (buffer.pixels) {
+        free(buffer.pixels);
+        buffer.pixels = NULL;
+    }
+    if (renderer) {
+        SDL_DestroyRenderer(renderer);
+        renderer = NULL;
+    }
+    if (window) {
+        SDL_DestroyWindow(window);
+        window = NULL;
+    }
+    SDL_Quit();
+}
+
+void SDLResizeRenderBuffer(RenderBuffer *buffer, int width, int height){
+    
+    // Free old buffer if it exists
+    if (buffer->pixels) {
+        free(buffer->pixels);
+        buffer->pixels = NULL;
+    }
+    // clear old texture
+    if (buffer->texture) {
+        SDL_DestroyTexture(buffer->texture);
+        buffer->texture = NULL;
+    }
 
     // update the buffer
-    buffer.height = height;
-    buffer.width = width;
+    buffer->height = height;
+    buffer->width = width;
+    buffer->bytesPerPixel = 4; // ARGB8888  
 
     // allocate space for pixels
-    buffer.pixels = calloc(width * height, 4); // automatically zeroes all bytes
-    // 4 bytes per pixel
+    buffer->pixels = calloc(width * height, buffer->bytesPerPixel); // automatically zeroes all bytes
+    if (!buffer->pixels) {
+        SDL_Log("⚠️ Failed to allocate memory for render buffer pixels");
+        return;
+    }
 
-    buffer.texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+    buffer->texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                          SDL_TEXTUREACCESS_STREAMING,
                                          width, height);
 
-    if (!buffer.texture) {
+    if (!buffer->texture) {
         SDL_Log("⚠️ Failed to recreate texture: %s", SDL_GetError());
     } else {
         SDL_Log("📐 Texture recreated: %dx%d", width, height);
     }
 }
 
-void SDLUpdatePixels(uint32_t *pixels, int width, int height, float t){
+void SDLUpdatePixels(RenderBuffer *buffer, float t){
     // write directly to the buffers pixels
 
+    int height = buffer->height;
+    int width = buffer->width;
+    uint32_t *pixels = (uint32_t *)buffer->pixels;
+
     for(int y = 0; y < height; ++y){
+        uint32_t *row = (uint32_t *)pixels + (y * width); // pointer to the start of the current row
         for(int x = 0; x < width; ++x){
-            //uint8_t red = (x * width)  / (width -1);
             uint8_t red = (uint8_t)((sin((x + t *100) * 0.01f) * 0.5f + 0.5f) *255);
             uint8_t blue = (uint8_t)((sin((x + y + t *100) * 0.01f) * 0.5f + 0.5f) *255);
             uint8_t green = (uint8_t)((sin((y + t *100) * 0.01f) * 0.5f + 0.5f) *255);;
             uint8_t alpha = 255;
-
-            // getting the index of a 2d array as a 1d array index
-            int index = (y * width + x);
-            // Pixels is little endian so actual order is blue green red
-            pixels[index] = blue | (green << 8) | (red << 16) | (alpha << 24); 
+            // dereference the pointer to set the pixel value
+            *(row + x) = blue | (green << 8) | (red << 16) | (alpha << 24);
         }
     }
 }
