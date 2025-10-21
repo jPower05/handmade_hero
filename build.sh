@@ -18,7 +18,7 @@ export PKG_CONFIG_PATH="$SDL_PKG_PATH:$PKG_CONFIG_PATH"
 
 # Compile the program
 echo "🔨 Building Handmade Hero..."
-gcc $SRC_DIR/*.cpp -o "$BUILD_DIR/prog" $(pkg-config --cflags --libs sdl3)
+gcc -g $SRC_DIR/*.c -o "$BUILD_DIR/prog" $(pkg-config --cflags --libs sdl3)
 
 echo "✅ Build complete!"
 echo "Run the program with: $BUILD_DIR/prog"
