@@ -2,6 +2,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <stdlib.h>
+#include <math.h>
 
 typedef struct{
     int width;
@@ -11,6 +12,7 @@ typedef struct{
 } RenderBuffer;
 
 void SDLResizeRenderBuffer(int Width, int Height);
+void SDLUpdatePixels(uint32_t *pixels, int width, int height, float t);
 
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
@@ -67,11 +69,16 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     if (start_time == 0)
         start_time = SDL_GetTicks();
 
+    Uint32 elapsed = SDL_GetTicks() - start_time;
+    float t = elapsed / 1000.0f; // time in seconds
+
     // Exit automatically after 5 seconds
     if (SDL_GetTicks() - start_time > 10000) {
         SDL_Log("⏱ Timeout reached, exiting...");
         return SDL_APP_SUCCESS;
     }
+
+    SDLUpdatePixels(buffer.pixels, buffer.width, buffer.height, t);
 
     SDL_UpdateTexture(buffer.texture, NULL, buffer.pixels, buffer.width * 4);
     // (buffer.width * 4 ) = how far to move in memory from one row of pixels to the next.
@@ -111,8 +118,8 @@ void SDLResizeRenderBuffer(int width, int height){
     buffer.width = width;
 
     // allocate space for pixels
-    buffer.pixels = malloc(width * height * 4); // 4 bytes per pixel
-    memset(buffer.pixels, 0, width * height * 4);   // set every byte of buffer to black/0
+    buffer.pixels = calloc(width * height, 4); // automatically zeroes all bytes
+    // 4 bytes per pixel
 
     buffer.texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                          SDL_TEXTUREACCESS_STREAMING,
@@ -123,5 +130,23 @@ void SDLResizeRenderBuffer(int width, int height){
     } else {
         SDL_Log("📐 Texture recreated: %dx%d", width, height);
     }
-    
+}
+
+void SDLUpdatePixels(uint32_t *pixels, int width, int height, float t){
+    // write directly to the buffers pixels
+
+    for(int y = 0; y < height; ++y){
+        for(int x = 0; x < width; ++x){
+            //uint8_t red = (x * width)  / (width -1);
+            uint8_t red = (uint8_t)((sin((x + t *100) * 0.01f) * 0.5f + 0.5f) *255);
+            uint8_t blue = (uint8_t)((sin((x + y + t *100) * 0.01f) * 0.5f + 0.5f) *255);
+            uint8_t green = (uint8_t)((sin((y + t *100) * 0.01f) * 0.5f + 0.5f) *255);;
+            uint8_t alpha = 255;
+
+            // getting the index of a 2d array as a 1d array index
+            int index = (y * width + x);
+            // Pixels is little endian so actual order is blue green red
+            pixels[index] = blue | (green << 8) | (red << 16) | (alpha << 24); 
+        }
+    }
 }
