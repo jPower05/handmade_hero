@@ -8,6 +8,7 @@ typedef struct{
     int width;
     int height;
     int bytesPerPixel;
+    int pitch; // how many bytes a pointer needs to move to get to the next row
     void *pixels;
     SDL_Texture *texture;
 } RenderBuffer;
@@ -18,13 +19,13 @@ void SDLUpdatePixels(RenderBuffer *buffer,float t);
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
 static RenderBuffer buffer = {0};
-static bool isWhite = true;
+static SDL_Gamepad *controller = NULL;
 
 // --- Called once at startup ---
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
     int init_height = 480;
     int init_width = 640;
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         SDL_Log("Failed to init SDL: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
@@ -34,6 +35,26 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
     renderer = SDL_CreateRenderer(window, NULL);
     
     SDLResizeRenderBuffer(&buffer, init_width, init_height);
+
+    // --- Gamepad initialization ---
+    int count = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&count);
+    SDL_Log("🎮 Found %d gamepads", count);
+
+    controller = NULL;
+    for (int i = 0; i < count; ++i) {
+        controller = SDL_OpenGamepad(ids[i]);
+        if (controller) {
+            SDL_Log("✅ Gamepad connected: %s", SDL_GetGamepadName(controller));
+            break;
+        }
+    }
+
+    SDL_free(ids);
+
+    if (!controller) {
+        SDL_Log("⚠️ No gamepad connected.");
+    }
     
     SDL_Log("✅ SDL initialized and window created");
     return SDL_APP_CONTINUE;
@@ -57,6 +78,78 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
             SDLResizeRenderBuffer(&buffer, width, height);
         }
         break;
+
+        case SDL_EVENT_KEY_DOWN: {
+            SDL_Scancode sc = event->key.scancode;
+
+            switch (sc) {
+                case SDL_SCANCODE_ESCAPE:
+                    SDL_Log("👋 Escape pressed — exiting");
+                    return SDL_APP_SUCCESS;
+
+                case SDL_SCANCODE_W:{
+                    SDL_Log("⌨️ Key pressed: %s", SDL_GetScancodeName(sc));
+                    break;
+                }
+                case SDL_SCANCODE_S:{
+                    SDL_Log("⌨️ Key pressed: %s", SDL_GetScancodeName(sc));
+                    break;
+                }
+                case SDL_SCANCODE_A:{
+                    SDL_Log("⌨️ Key pressed: %s", SDL_GetScancodeName(sc));
+                    break;
+                }
+                case SDL_SCANCODE_D:{
+                    SDL_Log("⌨️ Key pressed: %s", SDL_GetScancodeName(sc));
+                    break;
+                }
+                
+                default:
+                    SDL_Log("⌨️ Key pressed: %s", SDL_GetScancodeName(sc));
+                    break;
+            }
+        } 
+        break;
+
+        case SDL_EVENT_KEY_UP: {
+            SDL_Scancode sc = event->key.scancode;
+            SDL_Log("🪶 Key released: %s", SDL_GetScancodeName(sc));
+        } 
+        break;
+
+
+        // 🎮 Controller removed
+        case SDL_EVENT_GAMEPAD_REMOVED:{
+            SDL_Log("🎮 Controller removed (instance id: %d)", event->gdevice.which);
+            if (controller){
+                SDL_CloseGamepad(controller);
+                controller = NULL;
+                SDL_Log("🛑 Controller closed");
+            }
+        }
+        break;
+
+        // 🔘 Button down
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:{
+            SDL_Log("🔘 Button down: %s", SDL_GetGamepadStringForButton(event->gbutton.button));
+        }
+        break;
+
+        // 🔘 Button up
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:{
+            SDL_Log("🔘 Button up: %s", SDL_GetGamepadStringForButton(event->gbutton.button));
+        }
+        break;
+
+        // // 🎚️ Analog stick or trigger moved
+        // case SDL_EVENT_GAMEPAD_AXIS_MOTION:{
+        //     float norm = event->gaxis.value / 32767.0f;
+        //     SDL_Log("🎚️ Axis motion: %s = %.3f",
+        //         SDL_GetGamepadStringForAxis(event->gaxis.axis),
+        //             norm);
+        // }
+        // break;
+
         default:{
             return SDL_APP_CONTINUE;
         }
@@ -82,7 +175,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
     SDLUpdatePixels(&buffer, t);
 
-    SDL_UpdateTexture(buffer.texture, NULL, buffer.pixels, buffer.width * 4);
+    SDL_UpdateTexture(buffer.texture, NULL, buffer.pixels, buffer.pitch);
     // (buffer.width * 4 ) = how far to move in memory from one row of pixels to the next.
     SDL_RenderTexture(renderer, buffer.texture, NULL, NULL);
     SDL_RenderPresent(renderer);
@@ -108,6 +201,10 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result){
         SDL_DestroyWindow(window);
         window = NULL;
     }
+    if (controller){
+        SDL_CloseGamepad(controller);
+        controller = NULL;
+    }
     SDL_Quit();
 }
 
@@ -128,6 +225,7 @@ void SDLResizeRenderBuffer(RenderBuffer *buffer, int width, int height){
     buffer->height = height;
     buffer->width = width;
     buffer->bytesPerPixel = 4; // ARGB8888  
+    buffer->pitch = buffer->width * buffer->bytesPerPixel;
 
     // allocate space for pixels
     buffer->pixels = calloc(width * height, buffer->bytesPerPixel); // automatically zeroes all bytes
