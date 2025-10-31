@@ -23,12 +23,12 @@ typedef struct {
 } SoundState;
 
 typedef struct {
-    SDL_AudioStream *stream;
-    SDL_AudioSpec spec;
-    float *samples;
     int frames_per_buffer;
     int samples_per_buffer;
+    float *samples;
     size_t buffer_size;
+    SDL_AudioStream *stream;
+    SDL_AudioSpec spec;
 } AudioSystem;
 
 
@@ -37,6 +37,8 @@ void UpdatePixels(RenderBuffer *buffer,float t);
 bool InitAudio(AudioSystem *audioSystem, SoundState *soundState);
 void UpdateAudio(AudioSystem *audioSystem, SoundState *soundState);
 void DestroyAudio(AudioSystem *audioSystem);
+void GenerateSineWave(AudioSystem *audioSystem, SoundState *soundState);
+void GenerateSquareWave(AudioSystem *audioSystem, SoundState *soundState);
 
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
@@ -57,7 +59,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
     window = SDL_CreateWindow("Handmade Hero", init_width, init_height, SDL_WINDOW_RESIZABLE);
 
     // Initialize audio
-    soundState.frequency = 440.0f;  // A4 note
+    soundState.frequency = 256.0f;  // A4 note
     soundState.amplitude = 0.25f;
     soundState.phase = 0.0f;
 
@@ -361,20 +363,58 @@ void UpdateAudio(AudioSystem *audioSystem, SoundState *soundState) {
         int channels = audioSystem->spec.channels;
         float *samples = audioSystem->samples;
 
-        // Generate a simple sine wave
-        for (int i = 0; i < frames; ++i) {
-            float sample = sinf(2.0f * (float)M_PI * soundState->frequency * ((float)i / audioSystem->spec.freq) + soundState->phase)
-                         * soundState->amplitude;
-            for (int c = 0; c < channels; ++c)
-                samples[i * channels + c] = sample;
-        }
-
-        // Advance the phase for continuous playback
-        soundState->phase += 2.0f * (float)M_PI * soundState->frequency * ((float)frames / audioSystem->spec.freq);
-        if (soundState->phase > 2.0f * (float)M_PI)
-            soundState->phase -= 2.0f * (float)M_PI;
+        GenerateSineWave(audioSystem, soundState);
+        //GenerateSquareWave(audioSystem, soundState);
 
         // Feed the samples to the audio stream
         SDL_PutAudioStreamData(audioSystem->stream, samples, audioSystem->buffer_size);
     }
+}
+
+void GenerateSineWave(AudioSystem *audioSystem, SoundState *soundState){
+    int frames = audioSystem->frames_per_buffer;
+    int channels = audioSystem->spec.channels;
+    float *samples = audioSystem->samples;
+    // Generate a simple sine wave
+    for (int i = 0; i < frames; ++i) {
+        float sample = sinf(2.0f * (float)M_PI * soundState->frequency * ((float)i / audioSystem->spec.freq) + soundState->phase)
+                        * soundState->amplitude;
+        for (int c = 0; c < channels; ++c){
+            samples[i * channels + c] = sample;
+        }       
+    }
+
+    // Advance the phase for continuous playback
+    soundState->phase += 2.0f * (float)M_PI * soundState->frequency * ((float)frames / audioSystem->spec.freq);
+    if (soundState->phase > 2.0f * (float)M_PI){
+        soundState->phase -= 2.0f * (float)M_PI;
+    }
+        
+}
+
+void GenerateSquareWave(AudioSystem *audioSystem, SoundState *soundState){
+    int frames = audioSystem->frames_per_buffer;
+    int channels = audioSystem->spec.channels;
+    float *samples = audioSystem->samples;
+    int sample_rate = audioSystem->spec.freq;
+    float phase = soundState->phase;
+    float phase_increment = (soundState->frequency / (float)sample_rate);  // how much phase advances per sample
+
+    for (int i = 0; i < frames; ++i) {
+        // Generate a simple square wave: +amplitude for first half, -amplitude for second half
+        float value = (fmodf(phase, 1.0f) < 0.5f) ? soundState->amplitude : -soundState->amplitude;
+
+        // Write to both left and right channels (stereo)
+        for (int ch = 0; ch < channels; ++ch) {
+            samples[i * channels + ch] = value;
+        }
+
+        phase += phase_increment;
+        if (phase >= 1.0f){
+            phase -= 1.0f;  // wrap phase around after one cycle
+        } 
+    }
+
+    soundState->phase = phase;  // store phase for continuity across calls
+
 }
