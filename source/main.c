@@ -1,8 +1,12 @@
 #define SDL_MAIN_USE_CALLBACKS 1
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <stdlib.h>
 #include <math.h>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #define BUFFER_SECONDS 0.2f  // length of each buffer (100ms)
 #define SOUND_FREQ 48000
@@ -60,11 +64,17 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
 
     // Initialize audio
     soundState.frequency = 256.0f;  // A4 note
-    soundState.amplitude = 0.25f;
+    soundState.amplitude = 0.10f;
     soundState.phase = 0.0f;
 
     if (!InitAudio(&audioSystem, &soundState)) {
         SDL_Log("⚠️ Audio failed to init");
+    }
+
+    renderer = SDL_CreateRenderer(window, NULL);
+    if (!renderer) {
+        SDL_Log("❌ Failed to create renderer: %s", SDL_GetError());
+        return SDL_APP_FAILURE;
     }
     
     ResizeRenderBuffer(&buffer, init_width, init_height);
@@ -306,21 +316,19 @@ bool InitAudio(AudioSystem *audioSystem, SoundState *soundState){
     audioSystem->spec.channels = 2;             // stereo
     audioSystem->spec.freq = SOUND_FREQ;        // 48kHz
 
-    // Open an audio stream for playback
     audioSystem->stream = SDL_OpenAudioDeviceStream(
-        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,  // default output
-        &audioSystem->spec,                 // desired format
-        NULL,                               // actual format (optional)
-        NULL                                // callback (we’re streaming manually)
-    );
-
+        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, 
+        &audioSystem->spec, NULL, NULL);
     if (!audioSystem->stream) {
-        SDL_Log("❌ Failed to open audio stream: %s", SDL_GetError());
-        return false;
+        SDL_Log("Couldn't create audio stream: %s", SDL_GetError());
+        return SDL_APP_FAILURE;
     }
 
-    // Resume playback (start the device)
-    SDL_ResumeAudioDevice(SDL_GetAudioStreamDevice(audioSystem->stream));
+    UpdateAudio(audioSystem, soundState);
+
+    /* SDL_OpenAudioDeviceStream starts the device paused. You have to tell it to start! */
+    SDL_ResumeAudioStreamDevice(audioSystem->stream);
+
 
     // Allocate buffer for our generated samples
     audioSystem->frames_per_buffer = (int)(audioSystem->spec.freq * BUFFER_SECONDS);
