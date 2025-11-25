@@ -1,60 +1,37 @@
 #define SDL_MAIN_USE_CALLBACKS 1
 
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_main.h>
-#include <stdlib.h>
-#include <math.h>
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+#include "handmade.h"
+#define PI 3.14159265358979323846
 
 #define BUFFER_SECONDS 0.2f  // length of each buffer (100ms)
 #define SOUND_FREQ 48000
 
-typedef struct{
-    int width;
-    int height;
-    int bytesPerPixel;
-    int pitch; // how many bytes a pointer needs to move to get to the next row
-    void *pixels;
-    SDL_Texture *texture;
-} RenderBuffer;
 
-typedef struct {
-    float phase;
-    float frequency;
-    float amplitude;
-} SoundState;
-
-typedef struct {
-    int frames_per_buffer;
-    int samples_per_buffer;
-    float *samples;
-    size_t buffer_size;
-    SDL_AudioStream *stream;
-    SDL_AudioSpec spec;
-} AudioSystem;
-
-
-void ResizeRenderBuffer(RenderBuffer *buffer, int Width, int Height);
-void UpdatePixels(RenderBuffer *buffer,float t);
-bool InitAudio(AudioSystem *audioSystem, SoundState *soundState);
-void UpdateAudio(AudioSystem *audioSystem, SoundState *soundState);
-void DestroyAudio(AudioSystem *audioSystem);
-void GenerateSineWave(AudioSystem *audioSystem, SoundState *soundState);
-void GenerateSquareWave(AudioSystem *audioSystem, SoundState *soundState);
-
+// ------------------------------------------------------------
+// Globals
+// ------------------------------------------------------------
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
 static RenderBuffer buffer = {0};
 static AudioSystem audioSystem = {0};
 static SoundState soundState = {0};
 static SDL_Gamepad *controller = NULL;
+static SDL_Texture *texture = NULL;
+static SDL_AudioSpec audioSpec = {0};
+static SDL_AudioStream *audioStream = NULL;
+
+// Timing globals
+static uint64 perf_start = 0;
+static uint64 last_counter = 0;
+static double64 dt = 0;
+static double64 t_total = 0;
+static uint64 perf_freq = 0;
+
 
 // --- Called once at startup ---
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
-    int init_height = 480;
-    int init_width = 640;
+    uint32 init_height = 480;
+    uint32 init_width = 640;
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         SDL_Log("Failed to init SDL: %s", SDL_GetError());
         return SDL_APP_FAILURE;
@@ -78,6 +55,13 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
     }
     
     ResizeRenderBuffer(&buffer, init_width, init_height);
+
+    // Timing setup
+    perf_freq = SDL_GetPerformanceFrequency();
+    perf_start = SDL_GetPerformanceCounter();
+    last_counter = perf_start;
+
+    SDL_Log("High precision timer freq = %llu Hz", (uint64)perf_freq);
 
     // --- Gamepad initialization ---
     int count = 0;
@@ -116,8 +100,8 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         }
         break;
         case SDL_EVENT_WINDOW_RESIZED:{
-            int width = event->window.data1;
-            int height = event->window.data2;
+            uint32 width = event->window.data1;
+            uint32 height = event->window.data2;
             ResizeRenderBuffer(&buffer, width, height);
         }
         break;
@@ -203,25 +187,44 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 // --- Called once per frame (your main loop logic goes here) ---
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
-    static Uint32 start_time = 0;
-    if (start_time == 0)
-        start_time = SDL_GetTicks();
+    // timing
+    uint64 now = SDL_GetPerformanceCounter();
 
-    Uint32 elapsed = SDL_GetTicks() - start_time;
-    float t = elapsed / 1000.0f; // time in seconds
+    dt = (double64)(now - last_counter) / (double64)perf_freq;
+    last_counter = now;
+
+    t_total = (double64)(now - perf_start) / (double64)perf_freq;
+
+    // Debug output
+    static uint32 frame_count = 0;
+    if (++frame_count % 60 == 0) {
+        SDL_Log("FPS: %.1f   dt: %.6f   t_total: %.2f",
+            1.0 / dt, dt, t_total);
+    }
 
     // Exit automatically after 5 seconds
-    if (SDL_GetTicks() - start_time > 10000) {
+    if (t_total > 10) {
         SDL_Log("⏱ Timeout reached, exiting...");
         return SDL_APP_SUCCESS;
     }
+    // Determine how much audio is currently queued in the stream
+    uint32 queued_bytes = SDL_GetAudioStreamAvailable(audioStream);
+    uint32 target_bytes = (uint32)(audioSystem.buffer_size * 3);  // keep ~0.6s buffered
 
-    UpdatePixels(&buffer, t);
-    UpdateAudio(&audioSystem, &soundState);
+    if(GameUpdateAndRender(&buffer, (float32) t_total, &audioSystem, &soundState, queued_bytes, target_bytes, audioSpec.channels)){
+        // Feed the samples to the audio stream
+        SDL_PutAudioStreamData(audioStream, audioSystem.samples, audioSystem.buffer_size);
+    }
 
-    SDL_UpdateTexture(buffer.texture, NULL, buffer.pixels, buffer.pitch);
+    
+
+
+    //UpdatePixels(&buffer, (float32) t_total);
+    //UpdateAudio(&audioSystem, &soundState);
+
+    SDL_UpdateTexture(texture, NULL, buffer.pixels, buffer.pitch);
     // (buffer.width * 4 ) = how far to move in memory from one row of pixels to the next.
-    SDL_RenderTexture(renderer, buffer.texture, NULL, NULL);
+    SDL_RenderTexture(renderer, texture, NULL, NULL);
     SDL_RenderPresent(renderer);
     return SDL_APP_CONTINUE;
 }
@@ -230,9 +233,9 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 void SDL_AppQuit(void *appstate, SDL_AppResult result){
     SDL_Log("🧹 Cleaning up...");
     DestroyAudio(&audioSystem);
-    if (buffer.texture) {
-        SDL_DestroyTexture(buffer.texture);
-        buffer.texture = NULL;
+    if (texture) {
+        SDL_DestroyTexture(texture);
+        texture = NULL;
     }
     if (buffer.pixels) {
         free(buffer.pixels);
@@ -253,7 +256,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result){
     SDL_Quit();
 }
 
-void ResizeRenderBuffer(RenderBuffer *buffer, int width, int height){
+void ResizeRenderBuffer(RenderBuffer *buffer, uint32 width, uint32 height){
     
     // Free old buffer if it exists
     if (buffer->pixels) {
@@ -261,9 +264,9 @@ void ResizeRenderBuffer(RenderBuffer *buffer, int width, int height){
         buffer->pixels = NULL;
     }
     // clear old texture
-    if (buffer->texture) {
-        SDL_DestroyTexture(buffer->texture);
-        buffer->texture = NULL;
+    if (texture) {
+        SDL_DestroyTexture(texture);
+        texture = NULL;
     }
 
     // update the buffer
@@ -279,60 +282,40 @@ void ResizeRenderBuffer(RenderBuffer *buffer, int width, int height){
         return;
     }
 
-    buffer->texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                          SDL_TEXTUREACCESS_STREAMING,
                                          width, height);
 
-    if (!buffer->texture) {
+    if (!texture) {
         SDL_Log("⚠️ Failed to recreate texture: %s", SDL_GetError());
     } else {
         SDL_Log("📐 Texture recreated: %dx%d", width, height);
     }
 }
 
-void UpdatePixels(RenderBuffer *buffer, float t){
-    // write directly to the buffers pixels
-
-    int height = buffer->height;
-    int width = buffer->width;
-    uint32_t *pixels = (uint32_t *)buffer->pixels;
-
-    for(int y = 0; y < height; ++y){
-        uint32_t *row = (uint32_t *)pixels + (y * width); // pointer to the start of the current row
-        for(int x = 0; x < width; ++x){
-            uint8_t red = (uint8_t)((sin((x + t *100) * 0.01f) * 0.5f + 0.5f) *255);
-            uint8_t blue = (uint8_t)((sin((x + y + t *100) * 0.01f) * 0.5f + 0.5f) *255);
-            uint8_t green = (uint8_t)((sin((y + t *100) * 0.01f) * 0.5f + 0.5f) *255);;
-            uint8_t alpha = 255;
-            // dereference the pointer to set the pixel value
-            *(row + x) = blue | (green << 8) | (red << 16) | (alpha << 24);
-        }
-    }
-}
-
 bool InitAudio(AudioSystem *audioSystem, SoundState *soundState){
-    
-    audioSystem->spec.format = SDL_AUDIO_F32;   // 32-bit float audio
-    audioSystem->spec.channels = 2;             // stereo
-    audioSystem->spec.freq = SOUND_FREQ;        // 48kHz
 
-    audioSystem->stream = SDL_OpenAudioDeviceStream(
+    audioSpec.format = SDL_AUDIO_F32;   // 32-bit float audio
+    audioSpec.channels = 2;
+    audioSpec.freq = SOUND_FREQ;
+
+    audioStream = SDL_OpenAudioDeviceStream(
         SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, 
-        &audioSystem->spec, NULL, NULL);
-    if (!audioSystem->stream) {
+        &audioSpec, NULL, NULL);
+    if (!audioStream) {
         SDL_Log("Couldn't create audio stream: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
 
-    UpdateAudio(audioSystem, soundState);
+    //UpdateAudio(audioSystem, soundState);
 
     /* SDL_OpenAudioDeviceStream starts the device paused. You have to tell it to start! */
-    SDL_ResumeAudioStreamDevice(audioSystem->stream);
+    SDL_ResumeAudioStreamDevice(audioStream);
 
 
     // Allocate buffer for our generated samples
-    audioSystem->frames_per_buffer = (int)(audioSystem->spec.freq * BUFFER_SECONDS);
-    audioSystem->samples_per_buffer = audioSystem->frames_per_buffer * audioSystem->spec.channels;
+    audioSystem->frames_per_buffer = (uint32)(audioSpec.freq * BUFFER_SECONDS);
+    audioSystem->samples_per_buffer = audioSystem->frames_per_buffer * audioSpec.channels;
     audioSystem->buffer_size = audioSystem->samples_per_buffer * sizeof(float);
     audioSystem->samples = (float *)SDL_malloc(audioSystem->buffer_size);
 
@@ -342,17 +325,17 @@ bool InitAudio(AudioSystem *audioSystem, SoundState *soundState){
     }
 
     SDL_Log("🔊 Audio initialized: %.1f sec buffer, %d Hz, %d channels",
-        BUFFER_SECONDS, audioSystem->spec.freq, audioSystem->spec.channels);
+        BUFFER_SECONDS, audioSpec.freq, audioSpec.channels);
 
     return true;
 }
 
 void DestroyAudio(AudioSystem *audioSystem) {
-    if (audioSystem->stream) {
+    if (audioStream) {
         // Pause audio playback before destroying the stream
-        SDL_PauseAudioDevice(SDL_GetAudioStreamDevice(audioSystem->stream));
-        SDL_DestroyAudioStream(audioSystem->stream);
-        audioSystem->stream = NULL;
+        SDL_PauseAudioDevice(SDL_GetAudioStreamDevice(audioStream));
+        SDL_DestroyAudioStream(audioStream);
+        audioStream = NULL;
     }
     if (audioSystem->samples) {
         SDL_free(audioSystem->samples);
@@ -361,59 +344,59 @@ void DestroyAudio(AudioSystem *audioSystem) {
     SDL_Log("🧹 Audio system cleaned up");
 }
 
-void UpdateAudio(AudioSystem *audioSystem, SoundState *soundState) {
-    // Determine how much audio is currently queued in the stream
-    int queued_bytes = SDL_GetAudioStreamAvailable(audioSystem->stream);
-    int target_bytes = (int)(audioSystem->buffer_size * 3);  // keep ~0.6s buffered
+// void UpdateAudio(AudioSystem *audioSystem, SoundState *soundState) {
+//     // Determine how much audio is currently queued in the stream
+//     uint32 queued_bytes = SDL_GetAudioStreamAvailable(audioStream);
+//     uint32 target_bytes = (uint32)(audioSystem->buffer_size * 3);  // keep ~0.6s buffered
 
-    if (queued_bytes < target_bytes) {
-        int frames = audioSystem->frames_per_buffer;
-        int channels = audioSystem->spec.channels;
-        float *samples = audioSystem->samples;
+//     if (queued_bytes < target_bytes) {
+//         uint32 frames = audioSystem->frames_per_buffer;
+//         uint32 channels = audioSpec.channels;
+//         float *samples = audioSystem->samples;
 
-        GenerateSineWave(audioSystem, soundState);
-        //GenerateSquareWave(audioSystem, soundState);
+//         GenerateSineWave(audioSystem, soundState);
+//         //GenerateSquareWave(audioSystem, soundState);
 
-        // Feed the samples to the audio stream
-        SDL_PutAudioStreamData(audioSystem->stream, samples, audioSystem->buffer_size);
-    }
-}
+//         // Feed the samples to the audio stream
+//         SDL_PutAudioStreamData(audioStream, samples, audioSystem->buffer_size);
+//     }
+// }
 
 void GenerateSineWave(AudioSystem *audioSystem, SoundState *soundState){
-    int frames = audioSystem->frames_per_buffer;
-    int channels = audioSystem->spec.channels;
+    uint32 frames = audioSystem->frames_per_buffer;
+    uint32 channels = audioSpec.channels;
     float *samples = audioSystem->samples;
     // Generate a simple sine wave
-    for (int i = 0; i < frames; ++i) {
-        float sample = sinf(2.0f * (float)M_PI * soundState->frequency * ((float)i / audioSystem->spec.freq) + soundState->phase)
+    for (uint32 i = 0; i < frames; ++i) {
+        float sample = sinf(2.0f * (float)PI * soundState->frequency * ((float)i / audioSpec.freq) + soundState->phase)
                         * soundState->amplitude;
-        for (int c = 0; c < channels; ++c){
+        for (uint32 c = 0; c < channels; ++c){
             samples[i * channels + c] = sample;
         }       
     }
 
     // Advance the phase for continuous playback
-    soundState->phase += 2.0f * (float)M_PI * soundState->frequency * ((float)frames / audioSystem->spec.freq);
-    if (soundState->phase > 2.0f * (float)M_PI){
-        soundState->phase -= 2.0f * (float)M_PI;
+    soundState->phase += 2.0f * (float)PI * soundState->frequency * ((float)frames / audioSpec.freq);
+    if (soundState->phase > 2.0f * (float)PI){
+        soundState->phase -= 2.0f * (float)PI;
     }
         
 }
 
 void GenerateSquareWave(AudioSystem *audioSystem, SoundState *soundState){
-    int frames = audioSystem->frames_per_buffer;
-    int channels = audioSystem->spec.channels;
+    uint32 frames = audioSystem->frames_per_buffer;
+    uint32 channels = audioSpec.channels;
     float *samples = audioSystem->samples;
-    int sample_rate = audioSystem->spec.freq;
+    uint32 sample_rate = audioSpec.freq;
     float phase = soundState->phase;
     float phase_increment = (soundState->frequency / (float)sample_rate);  // how much phase advances per sample
 
-    for (int i = 0; i < frames; ++i) {
+    for (uint32 i = 0; i < frames; ++i) {
         // Generate a simple square wave: +amplitude for first half, -amplitude for second half
         float value = (fmodf(phase, 1.0f) < 0.5f) ? soundState->amplitude : -soundState->amplitude;
 
         // Write to both left and right channels (stereo)
-        for (int ch = 0; ch < channels; ++ch) {
+        for (uint32 ch = 0; ch < channels; ++ch) {
             samples[i * channels + ch] = value;
         }
 
