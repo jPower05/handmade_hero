@@ -1,10 +1,7 @@
 #define SDL_MAIN_USE_CALLBACKS 1
-
 #include "handmade.h"
-#define PI 3.14159265358979323846
-
-#define BUFFER_SECONDS 0.2f  // length of each buffer (100ms)
-#define SOUND_FREQ 48000
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 
 
 // ------------------------------------------------------------
@@ -12,13 +9,15 @@
 // ------------------------------------------------------------
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
-static RenderBuffer buffer = {0};
-static AudioSystem audioSystem = {0};
-static SoundState soundState = {0};
+static RenderBuffer render_buffer = {0};
+static AudioSystem audio_system = {0};
+static SoundState sound_state = {0};
 static SDL_Gamepad *controller = NULL;
 static SDL_Texture *texture = NULL;
-static SDL_AudioSpec audioSpec = {0};
-static SDL_AudioStream *audioStream = NULL;
+static SDL_AudioSpec audio_spec = {0};
+static SDL_AudioStream *audio_stream = NULL;
+
+static bool soundBufferNeedsFilling = true;
 
 // Timing globals
 static uint64 perf_start = 0;
@@ -26,6 +25,25 @@ static uint64 last_counter = 0;
 static double64 dt = 0;
 static double64 t_total = 0;
 static uint64 perf_freq = 0;
+
+// input
+static GameInputState input = {0};
+static GameInputState input_prev = {0};
+
+// ------------------------------------------------------------
+// Function Declarations
+// ------------------------------------------------------------
+
+// game controller input
+static void UpdateButton(ButtonState *oldBState, ButtonState *newBState, bool isDown);
+static void ProcessKeyboardEvent(SDL_KeyboardEvent *e);
+static void ProcessControllerButton(SDL_GamepadButtonEvent *e);
+
+// audio and rendering
+
+void ResizeRenderBuffer(RenderBuffer *buffer, uint32 Width, uint32 Height);
+bool InitAudio(AudioSystem *audio_system, SoundState *sound_state);
+void DestroyAudio(AudioSystem *audio_system);
 
 
 // --- Called once at startup ---
@@ -40,21 +58,21 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
     window = SDL_CreateWindow("Handmade Hero", init_width, init_height, SDL_WINDOW_RESIZABLE);
 
     // Initialize audio
-    soundState.frequency = 256.0f;  // A4 note
-    soundState.amplitude = 0.10f;
-    soundState.phase = 0.0f;
+    sound_state.frequency = 256.0f;  // A4 note
+    sound_state.amplitude = 0.10f;
+    sound_state.phase = 0.0f;
 
-    if (!InitAudio(&audioSystem, &soundState)) {
-        SDL_Log("⚠️ Audio failed to init");
+    if (!InitAudio(&audio_system, &sound_state)) {
+        SDL_Log("Audio failed to init");
     }
 
     renderer = SDL_CreateRenderer(window, NULL);
     if (!renderer) {
-        SDL_Log("❌ Failed to create renderer: %s", SDL_GetError());
+        SDL_Log("Failed to create renderer: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
     
-    ResizeRenderBuffer(&buffer, init_width, init_height);
+    ResizeRenderBuffer(&render_buffer, init_width, init_height);
 
     // Timing setup
     perf_freq = SDL_GetPerformanceFrequency();
@@ -66,13 +84,13 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
     // --- Gamepad initialization ---
     int count = 0;
     SDL_JoystickID *ids = SDL_GetGamepads(&count);
-    SDL_Log("🎮 Found %d gamepads", count);
+    SDL_Log("Found %d gamepads", count);
 
     controller = NULL;
     for (int i = 0; i < count; ++i) {
         controller = SDL_OpenGamepad(ids[i]);
         if (controller) {
-            SDL_Log("✅ Gamepad connected: %s", SDL_GetGamepadName(controller));
+            SDL_Log("Gamepad connected: %s", SDL_GetGamepadName(controller));
             break;
         }
     }
@@ -80,10 +98,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
     SDL_free(ids);
 
     if (!controller) {
-        SDL_Log("⚠️ No gamepad connected.");
+        SDL_Log("No gamepad connected.");
     }
     
-    SDL_Log("✅ SDL initialized and window created");
+    SDL_Log("SDL initialized and window created");
     return SDL_APP_CONTINUE;
 }
 
@@ -102,83 +120,19 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         case SDL_EVENT_WINDOW_RESIZED:{
             uint32 width = event->window.data1;
             uint32 height = event->window.data2;
-            ResizeRenderBuffer(&buffer, width, height);
+            ResizeRenderBuffer(&render_buffer, width, height);
         }
         break;
-
-        case SDL_EVENT_KEY_DOWN: {
-            SDL_Scancode sc = event->key.scancode;
-
-            switch (sc) {
-                case SDL_SCANCODE_ESCAPE:
-                    SDL_Log("👋 Escape pressed — exiting");
-                    return SDL_APP_SUCCESS;
-
-                case SDL_SCANCODE_W:{
-                    SDL_Log("⌨️ Key pressed: %s", SDL_GetScancodeName(sc));
-                    break;
-                }
-                case SDL_SCANCODE_S:{
-                    SDL_Log("⌨️ Key pressed: %s", SDL_GetScancodeName(sc));
-                    break;
-                }
-                case SDL_SCANCODE_A:{
-                    SDL_Log("⌨️ Key pressed: %s", SDL_GetScancodeName(sc));
-                    break;
-                }
-                case SDL_SCANCODE_D:{
-                    SDL_Log("⌨️ Key pressed: %s", SDL_GetScancodeName(sc));
-                    break;
-                }
-                
-                default:
-                    SDL_Log("⌨️ Key pressed: %s", SDL_GetScancodeName(sc));
-                    break;
-            }
-        } 
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_KEY_UP:
+            ProcessKeyboardEvent(&event->key);
         break;
-
-        case SDL_EVENT_KEY_UP: {
-            SDL_Scancode sc = event->key.scancode;
-            SDL_Log("🪶 Key released: %s", SDL_GetScancodeName(sc));
-        } 
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+            ProcessControllerButton(&event->gbutton);
         break;
-
-
-        // 🎮 Controller removed
-        case SDL_EVENT_GAMEPAD_REMOVED:{
-            SDL_Log("🎮 Controller removed (instance id: %d)", event->gdevice.which);
-            if (controller){
-                SDL_CloseGamepad(controller);
-                controller = NULL;
-                SDL_Log("🛑 Controller closed");
-            }
-        }
-        break;
-
-        // 🔘 Button down
-        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:{
-            SDL_Log("🔘 Button down: %s", SDL_GetGamepadStringForButton(event->gbutton.button));
-        }
-        break;
-
-        // 🔘 Button up
-        case SDL_EVENT_GAMEPAD_BUTTON_UP:{
-            SDL_Log("🔘 Button up: %s", SDL_GetGamepadStringForButton(event->gbutton.button));
-        }
-        break;
-
-        // // 🎚️ Analog stick or trigger moved
-        // case SDL_EVENT_GAMEPAD_AXIS_MOTION:{
-        //     float norm = event->gaxis.value / 32767.0f;
-        //     SDL_Log("🎚️ Axis motion: %s = %.3f",
-        //         SDL_GetGamepadStringForAxis(event->gaxis.axis),
-        //             norm);
-        // }
-        // break;
-
         default:{
-            return SDL_APP_CONTINUE;
+            break;
         }
     }
     return SDL_APP_CONTINUE;
@@ -187,6 +141,8 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 // --- Called once per frame (your main loop logic goes here) ---
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
+    
+
     // timing
     uint64 now = SDL_GetPerformanceCounter();
 
@@ -196,50 +152,52 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     t_total = (double64)(now - perf_start) / (double64)perf_freq;
 
     // Debug output
-    static uint32 frame_count = 0;
-    if (++frame_count % 60 == 0) {
-        SDL_Log("FPS: %.1f   dt: %.6f   t_total: %.2f",
-            1.0 / dt, dt, t_total);
-    }
+    // static uint32 frame_count = 0;
+    // if (++frame_count % 60 == 0) {
+    //     SDL_Log("FPS: %.1f   dt: %.6f   t_total: %.2f",
+    //         1.0 / dt, dt, t_total);
+    // }
 
     // Exit automatically after 5 seconds
-    if (t_total > 10) {
-        SDL_Log("⏱ Timeout reached, exiting...");
+    if (t_total > 100) {
+        SDL_Log("Timeout reached, exiting...");
         return SDL_APP_SUCCESS;
     }
-    // Determine how much audio is currently queued in the stream
-    uint32 queued_bytes = SDL_GetAudioStreamAvailable(audioStream);
-    uint32 target_bytes = (uint32)(audioSystem.buffer_size * 3);  // keep ~0.6s buffered
 
-    if(GameUpdateAndRender(&buffer, (float32) t_total, &audioSystem, &soundState, queued_bytes, target_bytes, audioSpec.channels)){
-        // Feed the samples to the audio stream
-        SDL_PutAudioStreamData(audioStream, audioSystem.samples, audioSystem.buffer_size);
+    // Determine how much audio is currently queued in the stream
+    uint32 queued_bytes = SDL_GetAudioStreamAvailable(audio_stream);
+    uint32 target_bytes = (uint32)(audio_system.buffer_size * 3);  // keep ~0.6s buffered
+
+    soundBufferNeedsFilling = (queued_bytes < target_bytes);
+
+    GameUpdateAndRender(&render_buffer, (float32) t_total, &audio_system, &sound_state, soundBufferNeedsFilling, &input);
+
+    if(soundBufferNeedsFilling){
+        SDL_PutAudioStreamData(audio_stream, audio_system.sound_buffer, audio_system.buffer_size);
     }
 
-    
-
-
-    //UpdatePixels(&buffer, (float32) t_total);
-    //UpdateAudio(&audioSystem, &soundState);
-
-    SDL_UpdateTexture(texture, NULL, buffer.pixels, buffer.pitch);
+    SDL_UpdateTexture(texture, NULL, render_buffer.pixels, render_buffer.pitch);
     // (buffer.width * 4 ) = how far to move in memory from one row of pixels to the next.
     SDL_RenderTexture(renderer, texture, NULL, NULL);
     SDL_RenderPresent(renderer);
+
+    // Copy current input to previous at the start of the frame
+    input_prev = input;
+    
     return SDL_APP_CONTINUE;
 }
 
 // --- Called once on shutdown ---
 void SDL_AppQuit(void *appstate, SDL_AppResult result){
-    SDL_Log("🧹 Cleaning up...");
-    DestroyAudio(&audioSystem);
+    SDL_Log("Cleaning up...");
+    DestroyAudio(&audio_system);
     if (texture) {
         SDL_DestroyTexture(texture);
         texture = NULL;
     }
-    if (buffer.pixels) {
-        free(buffer.pixels);
-        buffer.pixels = NULL;
+    if (render_buffer.pixels) {
+        SDL_free(render_buffer.pixels);
+        render_buffer.pixels = NULL;
     }
     if (renderer) {
         SDL_DestroyRenderer(renderer);
@@ -256,12 +214,12 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result){
     SDL_Quit();
 }
 
-void ResizeRenderBuffer(RenderBuffer *buffer, uint32 width, uint32 height){
+void ResizeRenderBuffer(RenderBuffer *render_buffer, uint32 width, uint32 height){
     
     // Free old buffer if it exists
-    if (buffer->pixels) {
-        free(buffer->pixels);
-        buffer->pixels = NULL;
+    if (render_buffer->pixels) {
+        free(render_buffer->pixels);
+        render_buffer->pixels = NULL;
     }
     // clear old texture
     if (texture) {
@@ -270,142 +228,149 @@ void ResizeRenderBuffer(RenderBuffer *buffer, uint32 width, uint32 height){
     }
 
     // update the buffer
-    buffer->height = height;
-    buffer->width = width;
-    buffer->bytesPerPixel = 4; // ARGB8888  
-    buffer->pitch = buffer->width * buffer->bytesPerPixel;
+    render_buffer->height = height;
+    render_buffer->width = width;
+    render_buffer->bytesPerPixel = 4; // ARGB8888  
+    render_buffer->pitch = render_buffer->width * render_buffer->bytesPerPixel;
 
     // allocate space for pixels
-    buffer->pixels = calloc(width * height, buffer->bytesPerPixel); // automatically zeroes all bytes
-    if (!buffer->pixels) {
-        SDL_Log("⚠️ Failed to allocate memory for render buffer pixels");
+    size_t total_bytes = (size_t)width * (size_t)height * render_buffer->bytesPerPixel;
+    render_buffer->pixels = SDL_malloc(total_bytes);
+
+    if (!render_buffer->pixels) {
+        SDL_Log("Failed to allocate memory for render buffer pixels");
         return;
     }
+
+    // zero the memory
+    SDL_memset(render_buffer->pixels, 0, total_bytes);
 
     texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                          SDL_TEXTUREACCESS_STREAMING,
                                          width, height);
 
     if (!texture) {
-        SDL_Log("⚠️ Failed to recreate texture: %s", SDL_GetError());
+        SDL_Log("Failed to recreate texture: %s", SDL_GetError());
     } else {
-        SDL_Log("📐 Texture recreated: %dx%d", width, height);
+        SDL_Log("Texture recreated: %dx%d", width, height);
     }
 }
 
-bool InitAudio(AudioSystem *audioSystem, SoundState *soundState){
+bool InitAudio(AudioSystem *audio_system, SoundState *sound_state){
 
-    audioSpec.format = SDL_AUDIO_F32;   // 32-bit float audio
-    audioSpec.channels = 2;
-    audioSpec.freq = SOUND_FREQ;
+    audio_spec.format = SDL_AUDIO_F32;   // 32-bit float audio
+    audio_spec.channels = SOUND_CHANNELS;
+    audio_spec.freq = SOUND_FREQ;
 
-    audioStream = SDL_OpenAudioDeviceStream(
+    audio_stream = SDL_OpenAudioDeviceStream(
         SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, 
-        &audioSpec, NULL, NULL);
-    if (!audioStream) {
+        &audio_spec, NULL, NULL);
+    if (!audio_stream) {
         SDL_Log("Couldn't create audio stream: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
 
-    //UpdateAudio(audioSystem, soundState);
+    //UpdateAudio(audio_system, sound_state);
 
     /* SDL_OpenAudioDeviceStream starts the device paused. You have to tell it to start! */
-    SDL_ResumeAudioStreamDevice(audioStream);
+    SDL_ResumeAudioStreamDevice(audio_stream);
 
 
     // Allocate buffer for our generated samples
-    audioSystem->frames_per_buffer = (uint32)(audioSpec.freq * BUFFER_SECONDS);
-    audioSystem->samples_per_buffer = audioSystem->frames_per_buffer * audioSpec.channels;
-    audioSystem->buffer_size = audioSystem->samples_per_buffer * sizeof(float);
-    audioSystem->samples = (float *)SDL_malloc(audioSystem->buffer_size);
+    audio_system->frames_per_buffer = (uint32)(audio_spec.freq * BUFFER_SECONDS);
+    audio_system->samples_per_buffer = audio_system->frames_per_buffer * audio_spec.channels;
+    audio_system->buffer_size = audio_system->samples_per_buffer * sizeof(float);
+    audio_system->sound_buffer = (float *)SDL_malloc(audio_system->buffer_size);
 
-    if (!audioSystem->samples) {
-        SDL_Log("❌ Failed to allocate audio buffer");
+    if (!audio_system->sound_buffer) {
+        SDL_Log("Failed to allocate audio buffer");
         return false;
     }
 
-    SDL_Log("🔊 Audio initialized: %.1f sec buffer, %d Hz, %d channels",
-        BUFFER_SECONDS, audioSpec.freq, audioSpec.channels);
+    // zero the memory
+    SDL_memset(audio_system->sound_buffer, 0, audio_system->buffer_size);
+
+
+    SDL_Log("Audio initialized: %.1f sec buffer, %d Hz, %d channels",
+        BUFFER_SECONDS, audio_spec.freq, audio_spec.channels);
 
     return true;
 }
 
-void DestroyAudio(AudioSystem *audioSystem) {
-    if (audioStream) {
+void DestroyAudio(AudioSystem *audio_system) {
+    if (audio_stream) {
         // Pause audio playback before destroying the stream
-        SDL_PauseAudioDevice(SDL_GetAudioStreamDevice(audioStream));
-        SDL_DestroyAudioStream(audioStream);
-        audioStream = NULL;
+        SDL_PauseAudioDevice(SDL_GetAudioStreamDevice(audio_stream));
+        SDL_DestroyAudioStream(audio_stream);
+        audio_stream = NULL;
     }
-    if (audioSystem->samples) {
-        SDL_free(audioSystem->samples);
-        audioSystem->samples = NULL;
+    if (audio_system->sound_buffer) {
+        SDL_free(audio_system->sound_buffer);
+        audio_system->sound_buffer = NULL;
     }
-    SDL_Log("🧹 Audio system cleaned up");
+    SDL_Log("Audio system cleaned up");
 }
 
-// void UpdateAudio(AudioSystem *audioSystem, SoundState *soundState) {
-//     // Determine how much audio is currently queued in the stream
-//     uint32 queued_bytes = SDL_GetAudioStreamAvailable(audioStream);
-//     uint32 target_bytes = (uint32)(audioSystem->buffer_size * 3);  // keep ~0.6s buffered
 
-//     if (queued_bytes < target_bytes) {
-//         uint32 frames = audioSystem->frames_per_buffer;
-//         uint32 channels = audioSpec.channels;
-//         float *samples = audioSystem->samples;
-
-//         GenerateSineWave(audioSystem, soundState);
-//         //GenerateSquareWave(audioSystem, soundState);
-
-//         // Feed the samples to the audio stream
-//         SDL_PutAudioStreamData(audioStream, samples, audioSystem->buffer_size);
-//     }
-// }
-
-void GenerateSineWave(AudioSystem *audioSystem, SoundState *soundState){
-    uint32 frames = audioSystem->frames_per_buffer;
-    uint32 channels = audioSpec.channels;
-    float *samples = audioSystem->samples;
-    // Generate a simple sine wave
-    for (uint32 i = 0; i < frames; ++i) {
-        float sample = sinf(2.0f * (float)PI * soundState->frequency * ((float)i / audioSpec.freq) + soundState->phase)
-                        * soundState->amplitude;
-        for (uint32 c = 0; c < channels; ++c){
-            samples[i * channels + c] = sample;
-        }       
-    }
-
-    // Advance the phase for continuous playback
-    soundState->phase += 2.0f * (float)PI * soundState->frequency * ((float)frames / audioSpec.freq);
-    if (soundState->phase > 2.0f * (float)PI){
-        soundState->phase -= 2.0f * (float)PI;
-    }
-        
+static void UpdateButton(ButtonState *oldBState, ButtonState *newBState, bool isDown){
+    newBState->ended_down = isDown;
+    newBState->half_transition_count = (oldBState->ended_down != isDown) ? 1 : 0;
 }
 
-void GenerateSquareWave(AudioSystem *audioSystem, SoundState *soundState){
-    uint32 frames = audioSystem->frames_per_buffer;
-    uint32 channels = audioSpec.channels;
-    float *samples = audioSystem->samples;
-    uint32 sample_rate = audioSpec.freq;
-    float phase = soundState->phase;
-    float phase_increment = (soundState->frequency / (float)sample_rate);  // how much phase advances per sample
+static void ProcessKeyboardEvent(SDL_KeyboardEvent *e) {
+    SDL_Scancode sc = e->scancode;
+    bool isDown = (e->type == SDL_EVENT_KEY_DOWN);
+    switch (sc) {
+    case SDL_SCANCODE_W:
+        UpdateButton(&input_prev.moveUp, &input.moveUp, isDown);
+        break;
+    case SDL_SCANCODE_S:
+        UpdateButton(&input_prev.moveDown, &input.moveDown, isDown);
+        break;
+    case SDL_SCANCODE_A:
+        UpdateButton(&input_prev.moveLeft, &input.moveLeft, isDown);
+        break;
+    case SDL_SCANCODE_D:
+        UpdateButton(&input_prev.moveRight, &input.moveRight, isDown);
+        break;
+    case SDL_SCANCODE_Q:
+        UpdateButton(&input_prev.actionA, &input.actionA, isDown);
+        break;
+    case SDL_SCANCODE_E:
+        UpdateButton(&input_prev.actionB, &input.actionB, isDown);
+        break;
+    default:
+        break;
+    }
+}
 
-    for (uint32 i = 0; i < frames; ++i) {
-        // Generate a simple square wave: +amplitude for first half, -amplitude for second half
-        float value = (fmodf(phase, 1.0f) < 0.5f) ? soundState->amplitude : -soundState->amplitude;
-
-        // Write to both left and right channels (stereo)
-        for (uint32 ch = 0; ch < channels; ++ch) {
-            samples[i * channels + ch] = value;
-        }
-
-        phase += phase_increment;
-        if (phase >= 1.0f){
-            phase -= 1.0f;  // wrap phase around after one cycle
+static void ProcessControllerButton(SDL_GamepadButtonEvent *e) {
+    if (!controller) return;
+    bool isDown = (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+    switch (e->button) {
+        case SDL_GAMEPAD_BUTTON_LABEL_A:{
+            UpdateButton(&input_prev.actionA, &input.actionA, isDown); 
         } 
+        break;
+        case SDL_GAMEPAD_BUTTON_LABEL_B:{
+            UpdateButton(&input_prev.actionB, &input.actionB, isDown);
+        } 
+        break;
+        case SDL_GAMEPAD_BUTTON_DPAD_UP:{
+            UpdateButton(&input_prev.moveUp, &input.moveUp, isDown);
+        }
+        break;
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN:{
+            UpdateButton(&input_prev.moveDown, &input.moveDown, isDown);
+        }
+        break;
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT:{
+            UpdateButton(&input_prev.moveLeft, &input.moveLeft, isDown);
+        }  
+        break;
+        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:{
+            UpdateButton(&input_prev.moveRight, &input.moveRight, isDown);
+        } 
+        break;
     }
-
-    soundState->phase = phase;  // store phase for continuity across calls
-
 }

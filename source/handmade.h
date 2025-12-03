@@ -1,12 +1,17 @@
 #pragma once
-
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_main.h>
 #include <stdlib.h>
 #include <math.h>
+#include <stdbool.h>
+#include <stdio.h>
+
+#define BUFFER_SECONDS 0.2f  // length of each buffer (100ms)
+#define SOUND_FREQ 48000
+#define SOUND_CHANNELS 2
+#define MAX_KEYS 512
 
 typedef uint32_t uint32;
 typedef uint64_t uint64;
+typedef uint8_t uint8;
 typedef float float32;
 typedef double double64;
 
@@ -27,21 +32,38 @@ typedef struct {
 typedef struct {
     uint32 frames_per_buffer;
     uint32 samples_per_buffer;
-    float32 *samples;
+    uint32 channels;
+    float32 *sound_buffer;
     size_t buffer_size;
 } AudioSystem;
 
+typedef struct {
+    bool ended_down;          // // Is the button currently pressed?
+    uint8 half_transition_count; // // Did the button change state this frame? 0 or 1
+} ButtonState;
+
+typedef struct{
+    bool is_analog;
+
+    union {
+        struct {
+            ButtonState moveUp; // key w, dpad up
+            ButtonState moveDown;   // key s, dpad down
+            ButtonState moveLeft;   // key a, dpad left
+            ButtonState moveRight;  // key d, dpad right
+            ButtonState actionA;    // key q, a button
+            ButtonState actionB;    // key e, b button
+        };
+        ButtonState keys[6]; // legacy array, union gives named buttons
+    };
+} GameInputState;
+
 // platform independent functions
-bool GameUpdateAndRender(RenderBuffer *buffer,float t, AudioSystem *audioSystem, SoundState *soundState,
-    uint32 queued_bytes, uint32 target_bytes, uint32 channels);
+void GameUpdateAndRender(RenderBuffer *buffer, float t, AudioSystem *audio_system, SoundState *sound_state, bool soundBufferNeedsFilling,
+                        GameInputState *input);
 
 void UpdatePixels(RenderBuffer *buffer,float t);
-bool UpdateAudio(AudioSystem *audioSystem, SoundState *soundState, uint32 queued_bytes, uint32 target_bytes, uint32 channels);
-
-// platform sdl dependent functions
-
-void ResizeRenderBuffer(RenderBuffer *buffer, uint32 Width, uint32 Height);
-bool InitAudio(AudioSystem *audioSystem, SoundState *soundState);
-void DestroyAudio(AudioSystem *audioSystem);
-void GenerateSineWave(AudioSystem *audioSystem, SoundState *soundState);
-void GenerateSquareWave(AudioSystem *audioSystem, SoundState *soundState);
+void UpdateAudio(AudioSystem *audio_system, SoundState *sound_state);
+void GenerateSineWave(AudioSystem *audio_system, SoundState *sound_state);
+// void GenerateSquareWave(AudioSystem *audio_system, SoundState *sound_state);
+static void UpdateGameInput(GameInputState *input);
