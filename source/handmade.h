@@ -8,12 +8,16 @@
 #define SOUND_FREQ 48000
 #define SOUND_CHANNELS 2
 #define MAX_KEYS 512
+#define STICK_DEADZONE 0.10f
 
 typedef uint32_t uint32;
 typedef uint64_t uint64;
 typedef uint8_t uint8;
+typedef uint16_t uint16;
+typedef int16_t int16;
 typedef float float32;
 typedef double double64;
+
 
 typedef struct{
     uint32 width;
@@ -45,14 +49,28 @@ typedef struct {
 typedef struct{
     bool is_analog;
 
+    //analog stick state last frame
+    float32 start_x;
+    float32 start_y;
+
+    float32 max_x;
+    float32 max_y;
+
+    float32 min_x;
+    float32 min_y;
+
+    // analog stick state this frame
+    float32 end_x;
+    float32 end_y;
+
     union {
         struct {
-            ButtonState moveUp; // key w, dpad up
-            ButtonState moveDown;   // key s, dpad down
-            ButtonState moveLeft;   // key a, dpad left
-            ButtonState moveRight;  // key d, dpad right
-            ButtonState actionA;    // key q, a button
-            ButtonState actionB;    // key e, b button
+            ButtonState move_up; // key w, dpad up
+            ButtonState move_down;   // key s, dpad down
+            ButtonState move_left;   // key a, dpad left
+            ButtonState move_right;  // key d, dpad right
+            ButtonState action_A;    // key q, a button
+            ButtonState action_B;    // key e, b button
         };
         ButtonState keys[6]; // legacy array, union gives named buttons
     };

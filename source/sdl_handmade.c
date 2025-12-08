@@ -38,6 +38,8 @@ static GameInputState input_prev = {0};
 static void UpdateButton(ButtonState *oldBState, ButtonState *newBState, bool isDown);
 static void ProcessKeyboardEvent(SDL_KeyboardEvent *e);
 static void ProcessControllerButton(SDL_GamepadButtonEvent *e);
+static void ProcessControllerAxis(SDL_GamepadAxisEvent *e);
+static float NormalizeStickValue(int16 val);
 
 // audio and rendering
 
@@ -100,6 +102,15 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
     if (!controller) {
         SDL_Log("No gamepad connected.");
     }
+
+    // stick defaults
+    input.start_x = 0.0f;
+    input.start_y = 0.0f;
+    input.end_x = 0.0f;
+    input.end_y = 0.0f;
+
+    input.min_x = input.min_y = 9999.0f;
+    input.max_x = input.max_y = -9999.0f;
     
     SDL_Log("SDL initialized and window created");
     return SDL_APP_CONTINUE;
@@ -131,6 +142,9 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         case SDL_EVENT_GAMEPAD_BUTTON_UP:
             ProcessControllerButton(&event->gbutton);
         break;
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+            ProcessControllerAxis(&event->gaxis);
+        break;
         default:{
             break;
         }
@@ -139,9 +153,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 }
 
 // --- Called once per frame (your main loop logic goes here) ---
-SDL_AppResult SDL_AppIterate(void *appstate)
-{
-    
+SDL_AppResult SDL_AppIterate(void *appstate){
 
     // timing
     uint64 now = SDL_GetPerformanceCounter();
@@ -163,6 +175,15 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         SDL_Log("Timeout reached, exiting...");
         return SDL_APP_SUCCESS;
     }
+
+    input.is_analog = false;
+
+    // copy analog values for next frame
+    input.start_x = input.end_x;
+    input.start_y = input.end_y;
+
+    // determine if stick is currently moved outside deadzone
+    input.is_analog = (fabsf(input.end_x) >= STICK_DEADZONE || fabsf(input.end_y) >= STICK_DEADZONE);
 
     // Determine how much audio is currently queued in the stream
     uint32 queued_bytes = SDL_GetAudioStreamAvailable(audio_stream);
@@ -322,22 +343,22 @@ static void ProcessKeyboardEvent(SDL_KeyboardEvent *e) {
     bool isDown = (e->type == SDL_EVENT_KEY_DOWN);
     switch (sc) {
     case SDL_SCANCODE_W:
-        UpdateButton(&input_prev.moveUp, &input.moveUp, isDown);
+        UpdateButton(&input_prev.move_up, &input.move_up, isDown);
         break;
     case SDL_SCANCODE_S:
-        UpdateButton(&input_prev.moveDown, &input.moveDown, isDown);
+        UpdateButton(&input_prev.move_down, &input.move_down, isDown);
         break;
     case SDL_SCANCODE_A:
-        UpdateButton(&input_prev.moveLeft, &input.moveLeft, isDown);
+        UpdateButton(&input_prev.move_left, &input.move_left, isDown);
         break;
     case SDL_SCANCODE_D:
-        UpdateButton(&input_prev.moveRight, &input.moveRight, isDown);
+        UpdateButton(&input_prev.move_right, &input.move_right, isDown);
         break;
     case SDL_SCANCODE_Q:
-        UpdateButton(&input_prev.actionA, &input.actionA, isDown);
+        UpdateButton(&input_prev.action_A, &input.action_A, isDown);
         break;
     case SDL_SCANCODE_E:
-        UpdateButton(&input_prev.actionB, &input.actionB, isDown);
+        UpdateButton(&input_prev.action_B, &input.action_B, isDown);
         break;
     default:
         break;
@@ -349,28 +370,80 @@ static void ProcessControllerButton(SDL_GamepadButtonEvent *e) {
     bool isDown = (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
     switch (e->button) {
         case SDL_GAMEPAD_BUTTON_LABEL_A:{
-            UpdateButton(&input_prev.actionA, &input.actionA, isDown); 
+            UpdateButton(&input_prev.action_A, &input.action_A, isDown); 
         } 
         break;
         case SDL_GAMEPAD_BUTTON_LABEL_B:{
-            UpdateButton(&input_prev.actionB, &input.actionB, isDown);
+            UpdateButton(&input_prev.action_B, &input.action_B, isDown);
         } 
         break;
         case SDL_GAMEPAD_BUTTON_DPAD_UP:{
-            UpdateButton(&input_prev.moveUp, &input.moveUp, isDown);
+            UpdateButton(&input_prev.move_up, &input.move_up, isDown);
         }
         break;
         case SDL_GAMEPAD_BUTTON_DPAD_DOWN:{
-            UpdateButton(&input_prev.moveDown, &input.moveDown, isDown);
+            UpdateButton(&input_prev.move_down, &input.move_down, isDown);
         }
         break;
         case SDL_GAMEPAD_BUTTON_DPAD_LEFT:{
-            UpdateButton(&input_prev.moveLeft, &input.moveLeft, isDown);
+            UpdateButton(&input_prev.move_left, &input.move_left, isDown);
         }  
         break;
         case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:{
-            UpdateButton(&input_prev.moveRight, &input.moveRight, isDown);
+            UpdateButton(&input_prev.move_right, &input.move_right, isDown);
         } 
         break;
+    }
+}
+
+static void ProcessControllerAxis(SDL_GamepadAxisEvent *e) {
+    if (!controller) return;
+    
+    float32 val = NormalizeStickValue(e->value);
+
+    if (fabsf(val) < STICK_DEADZONE){
+        val = 0.0f;
+    } else {
+        SDL_Log("Gamepad axis %d raw=%d norm=%.4f", e->axis, e->value, val);
+    }
+
+    
+
+    switch(e->axis){
+        case SDL_GAMEPAD_AXIS_LEFTX:
+            input.end_x = val;
+
+            if (val < input.min_x) input.min_x = val;
+            if (val > input.max_x) input.max_x = val;
+            break;
+
+        case SDL_GAMEPAD_AXIS_LEFTY:
+            input.end_y = val;
+
+            if (val < input.min_y) input.min_y = val;
+            if (val > input.max_y) input.max_y = val;
+            break;
+    }
+
+
+    // using sticks like dpad
+    bool up    = (input.end_y < -0.5f);
+    bool down  = (input.end_y >  0.5f);
+    bool left  = (input.end_x < -0.5f);
+    bool right = (input.end_x >  0.5f);
+
+    UpdateButton(&input_prev.move_up,    &input.move_up,    up);
+    UpdateButton(&input_prev.move_down,  &input.move_down,  down);
+    UpdateButton(&input_prev.move_left,  &input.move_left,  left);
+    UpdateButton(&input_prev.move_right, &input.move_right, right);
+
+}
+
+static float NormalizeStickValue(int16 raw){
+    // normalize the value
+    if (raw < 0) {
+        return (float)raw / 32768.0f;   // maps -32768 -> -1.0
+    } else {
+        return (float)raw / 32767.0f;   // maps  32767 ->  1.0
     }
 }

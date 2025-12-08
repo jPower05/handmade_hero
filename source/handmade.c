@@ -90,6 +90,7 @@ void GenerateSineWave(AudioSystem *audio_system, SoundState *sound_state){
 
 */
 static void UpdateGameInput(GameInputState *input){
+
     
     for (int i = 0; i < 6; ++i) {   // 6 buttons in your union array
         ButtonState *btn = &input->keys[i];
@@ -101,6 +102,13 @@ static void UpdateGameInput(GameInputState *input){
         } else if (!btn->half_transition_count && btn->ended_down) {
             printf("%s held down\n", button_names[i]);
         }
+
+        // Reset transition count after processing
+        btn->half_transition_count = 0;
     }
 
+    // there has been stick movement
+    if(input->is_analog){
+        printf("Analog end_x = %.3f   end_y = %.3f\n", input->end_x, input->end_y);
+    }
 }
