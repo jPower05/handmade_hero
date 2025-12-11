@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdint.h>
 
 #define internal_func        static
 #define local_persist   static
@@ -23,6 +24,7 @@ typedef uint64_t uint64;
 typedef uint8_t uint8;
 typedef uint16_t uint16;
 typedef int16_t int16;
+typedef uint8_t uint8;
 typedef bool bool32;
 typedef float float32;
 typedef double double64;

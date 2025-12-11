@@ -7,6 +7,10 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#include <unistd.h>
+#include <stdio.h>
+#include <limits.h>
+
 
 // ------------------------------------------------------------
 // Globals
@@ -97,6 +101,7 @@ void *PlatformReadEntireFile(char *filename){
 
 void PlatformFreeFileMemory(void *memory){
     SDL_free(memory);
+    SDL_Log("File memory freed");
 }
 bool32 PlatformWriteEntireFile(char *filename, uint32 memory_size, void *memory){
     return true;
@@ -126,6 +131,10 @@ bool InitGameMemory(){
 
 // --- Called once at startup ---
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
+
+    char cwd[1000];
+    getcwd(cwd, sizeof(cwd));
+    printf("Current working directory: %s\n", cwd);
 
     uint32 init_height = 480;
     uint32 init_width = 640;

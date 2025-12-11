@@ -12,16 +12,16 @@ void GameUpdateAndRender(GameMemory *game_memory, RenderBuffer *buffer,float t, 
     GameState *game_state = (GameState *)game_memory->permanent_storage;
     
     if(!game_memory->is_inititialized){
+        // file loading (note '/' at start is important for absolute path)
+        char filename[128];
+        realpath("source/test.txt", filename);
+        printf("Trying to open file: %s\n", filename);
 
-        // file loading
-        char filename[64] = "test.txt";
         void *bitmap_memory = PlatformReadEntireFile(filename);
-        if(bitmap_memory == NULL){
-            printf("error bitch\n");
-        }
         if(bitmap_memory){
             printf("success");
             PlatformFreeFileMemory(bitmap_memory);
+            bitmap_memory = NULL;
         }
 
         game_state->counter = 0;
@@ -40,15 +40,15 @@ internal_func void UpdatePixels(RenderBuffer *buffer, float t){
 
     uint32 height = buffer->height;
     uint32 width = buffer->width;
-    uint32_t *pixels = (uint32_t *)buffer->pixels;
+    uint32 *pixels = (uint32 *)buffer->pixels;
 
     for(uint32 y = 0; y < height; ++y){
-        uint32_t *row = (uint32_t *)pixels + (y * width); // pointer to the start of the current row
+        uint32 *row = (uint32 *)pixels + (y * width); // pointer to the start of the current row
         for(uint32 x = 0; x < width; ++x){
-            uint8_t red = (uint8_t)((sin((x + t *100) * 0.01f) * 0.5f + 0.5f) *255);
-            uint8_t blue = (uint8_t)((sin((x + y + t *100) * 0.01f) * 0.5f + 0.5f) *255);
-            uint8_t green = (uint8_t)((sin((y + t *100) * 0.01f) * 0.5f + 0.5f) *255);;
-            uint8_t alpha = 255;
+            uint8 red = (uint8)((sin((x + t *100) * 0.01f) * 0.5f + 0.5f) *255);
+            uint8 blue = (uint8)((sin((x + y + t *100) * 0.01f) * 0.5f + 0.5f) *255);
+            uint8 green = (uint8)((sin((y + t *100) * 0.01f) * 0.5f + 0.5f) *255);;
+            uint8 alpha = 255;
             // dereference the pointer to set the pixel value
             *(row + x) = blue | (green << 8) | (red << 16) | (alpha << 24);
         }
