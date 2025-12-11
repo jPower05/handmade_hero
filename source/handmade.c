@@ -5,8 +5,13 @@ const char *button_names[6] = {
     "moveUp", "moveDown", "moveLeft", "moveRight", "actionA", "actionB"
 };
 
-void GameUpdateAndRender(RenderBuffer *buffer,float t, AudioSystem *audio_system, SoundState *sound_state, bool soundBufferNeedsFilling,
+void GameUpdateAndRender(GameMemory *game_memory, RenderBuffer *buffer,float t, AudioSystem *audio_system, SoundState *sound_state, bool soundBufferNeedsFilling,
                         GameInputState *input){
+    GameState *game_state = (GameState *)game_memory->permanent_storage;
+    if(!game_memory->is_inititialized){
+        game_state->counter = 0;
+        game_memory->is_inititialized = true;
+    }
     UpdatePixels(buffer,t);
     UpdateGameInput(input);
 

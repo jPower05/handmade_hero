@@ -4,6 +4,10 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#define Kilobytes(Value) ((Value) * 1024LL)
+#define Megabytes(Value) (Kilobytes(Value) * 1024LL)
+#define Gigabytes(Value) (Megabytes(Value) * 1024LL)
+
 #define BUFFER_SECONDS 0.2f  // length of each buffer (100ms)
 #define SOUND_FREQ 48000
 #define SOUND_CHANNELS 2
@@ -15,9 +19,18 @@ typedef uint64_t uint64;
 typedef uint8_t uint8;
 typedef uint16_t uint16;
 typedef int16_t int16;
+typedef bool bool32;
 typedef float float32;
 typedef double double64;
 
+// uint8* is a pointer to the first byte of a memory region.
+typedef struct{
+    bool32 is_inititialized;
+    uint64 permanent_storage_size;
+    uint8 *permanent_storage;    // must be initialized to zero at startup
+    uint64 transient_storage_size;
+    uint8 *transient_storage;    // must be initialized to zero at startup
+} GameMemory;
 
 typedef struct{
     uint32 width;
@@ -76,8 +89,12 @@ typedef struct{
     };
 } GameInputState;
 
+typedef struct{
+    uint32 counter;
+} GameState;
+
 // platform independent functions
-void GameUpdateAndRender(RenderBuffer *buffer, float t, AudioSystem *audio_system, SoundState *sound_state, bool soundBufferNeedsFilling,
+void GameUpdateAndRender(GameMemory *game_memory, RenderBuffer *buffer, float t, AudioSystem *audio_system, SoundState *sound_state, bool soundBufferNeedsFilling,
                         GameInputState *input);
 
 void UpdatePixels(RenderBuffer *buffer,float t);

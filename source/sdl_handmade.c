@@ -7,6 +7,8 @@
 // ------------------------------------------------------------
 // Globals
 // ------------------------------------------------------------
+static GameMemory game_memory = {0};
+
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
 static RenderBuffer render_buffer = {0};
@@ -33,6 +35,7 @@ static GameInputState input_prev = {0};
 // ------------------------------------------------------------
 // Function Declarations
 // ------------------------------------------------------------
+bool InitGameMemory();
 
 // game controller input
 static void UpdateButton(ButtonState *oldBState, ButtonState *newBState, bool isDown);
@@ -47,14 +50,42 @@ void ResizeRenderBuffer(RenderBuffer *buffer, uint32 Width, uint32 Height);
 bool InitAudio(AudioSystem *audio_system, SoundState *sound_state);
 void DestroyAudio(AudioSystem *audio_system);
 
+bool InitGameMemory(){
+    game_memory.permanent_storage_size = Megabytes(64);
+    game_memory.transient_storage_size = Gigabytes(2);
+
+    size_t total_size = game_memory.permanent_storage_size + game_memory.transient_storage_size;
+
+    void *block = SDL_calloc(1, total_size);
+    if(!block){
+        SDL_LogError(SDL_LOG_CATEGORY_ERROR,
+                     "Failed to allocate %zu bytes for game memory",
+                     total_size);
+        return false;
+    }
+
+    // split the block
+    game_memory.permanent_storage = block; // start of the game_memory_block
+    game_memory.transient_storage = (uint8 *)block + game_memory.permanent_storage_size;
+
+    return true;
+}
+
 
 // --- Called once at startup ---
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
+
     uint32 init_height = 480;
     uint32 init_width = 640;
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         SDL_Log("Failed to init SDL: %s", SDL_GetError());
         return SDL_APP_FAILURE;
+    }
+
+    // allocate game memory
+    if(!InitGameMemory()){
+        SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Failed to allocate game memory");
+        return SDL_APP_FAILURE; 
     }
     
     window = SDL_CreateWindow("Handmade Hero", init_width, init_height, SDL_WINDOW_RESIZABLE);
@@ -191,7 +222,7 @@ SDL_AppResult SDL_AppIterate(void *appstate){
 
     soundBufferNeedsFilling = (queued_bytes < target_bytes);
 
-    GameUpdateAndRender(&render_buffer, (float32) t_total, &audio_system, &sound_state, soundBufferNeedsFilling, &input);
+    GameUpdateAndRender(&game_memory, &render_buffer, (float32) t_total, &audio_system, &sound_state, soundBufferNeedsFilling, &input);
 
     if(soundBufferNeedsFilling){
         SDL_PutAudioStreamData(audio_stream, audio_system.sound_buffer, audio_system.buffer_size);
@@ -211,6 +242,7 @@ SDL_AppResult SDL_AppIterate(void *appstate){
 // --- Called once on shutdown ---
 void SDL_AppQuit(void *appstate, SDL_AppResult result){
     SDL_Log("Cleaning up...");
+
     DestroyAudio(&audio_system);
     if (texture) {
         SDL_DestroyTexture(texture);
@@ -232,6 +264,13 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result){
         SDL_CloseGamepad(controller);
         controller = NULL;
     }
+
+    if (game_memory.permanent_storage) {
+        SDL_free(game_memory.permanent_storage);    // start of memory block
+        game_memory.permanent_storage = NULL;
+        game_memory.transient_storage = NULL; 
+    }
+
     SDL_Quit();
 }
 
@@ -404,7 +443,7 @@ static void ProcessControllerAxis(SDL_GamepadAxisEvent *e) {
     if (fabsf(val) < STICK_DEADZONE){
         val = 0.0f;
     } else {
-        SDL_Log("Gamepad axis %d raw=%d norm=%.4f", e->axis, e->value, val);
+        //SDL_Log("Gamepad axis %d raw=%d norm=%.4f", e->axis, e->value, val);
     }
 
     
