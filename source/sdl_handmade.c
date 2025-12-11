@@ -1,3 +1,7 @@
+
+#include "SDL3/SDL_iostream.h"
+#include "SDL3/SDL_log.h"
+#include "SDL3/SDL_stdinc.h"
 #define SDL_MAIN_USE_CALLBACKS 1
 #include "handmade.h"
 #include <SDL3/SDL.h>
@@ -7,48 +11,96 @@
 // ------------------------------------------------------------
 // Globals
 // ------------------------------------------------------------
-static GameMemory game_memory = {0};
+global_variable GameMemory game_memory = {0};
 
-static SDL_Window *window = NULL;
-static SDL_Renderer *renderer = NULL;
-static RenderBuffer render_buffer = {0};
-static AudioSystem audio_system = {0};
-static SoundState sound_state = {0};
-static SDL_Gamepad *controller = NULL;
-static SDL_Texture *texture = NULL;
-static SDL_AudioSpec audio_spec = {0};
-static SDL_AudioStream *audio_stream = NULL;
+global_variable SDL_Window *window = NULL;
+global_variable SDL_Renderer *renderer = NULL;
+global_variable RenderBuffer render_buffer = {0};
+global_variable AudioSystem audio_system = {0};
+global_variable SoundState sound_state = {0};
+global_variable SDL_Gamepad *controller = NULL;
+global_variable SDL_Texture *texture = NULL;
+global_variable SDL_AudioSpec audio_spec = {0};
+global_variable SDL_AudioStream *audio_stream = NULL;
 
-static bool soundBufferNeedsFilling = true;
+global_variable bool soundBufferNeedsFilling = true;
 
 // Timing globals
-static uint64 perf_start = 0;
-static uint64 last_counter = 0;
-static double64 dt = 0;
-static double64 t_total = 0;
-static uint64 perf_freq = 0;
+global_variable uint64 perf_start = 0;
+global_variable uint64 last_counter = 0;
+global_variable double64 dt = 0;
+global_variable double64 t_total = 0;
+global_variable uint64 perf_freq = 0;
 
 // input
-static GameInputState input = {0};
-static GameInputState input_prev = {0};
+global_variable GameInputState input = {0};
+global_variable GameInputState input_prev = {0};
 
 // ------------------------------------------------------------
 // Function Declarations
 // ------------------------------------------------------------
-bool InitGameMemory();
+internal_func bool InitGameMemory();
 
 // game controller input
-static void UpdateButton(ButtonState *oldBState, ButtonState *newBState, bool isDown);
-static void ProcessKeyboardEvent(SDL_KeyboardEvent *e);
-static void ProcessControllerButton(SDL_GamepadButtonEvent *e);
-static void ProcessControllerAxis(SDL_GamepadAxisEvent *e);
-static float NormalizeStickValue(int16 val);
+internal_func void UpdateButton(ButtonState *oldBState, ButtonState *newBState, bool isDown);
+internal_func void ProcessKeyboardEvent(SDL_KeyboardEvent *e);
+internal_func void ProcessControllerButton(SDL_GamepadButtonEvent *e);
+internal_func void ProcessControllerAxis(SDL_GamepadAxisEvent *e);
+internal_func float NormalizeStickValue(int16 val);
 
 // audio and rendering
 
-void ResizeRenderBuffer(RenderBuffer *buffer, uint32 Width, uint32 Height);
-bool InitAudio(AudioSystem *audio_system, SoundState *sound_state);
-void DestroyAudio(AudioSystem *audio_system);
+internal_func void ResizeRenderBuffer(RenderBuffer *buffer, uint32 Width, uint32 Height);
+internal_func bool InitAudio(AudioSystem *audio_system, SoundState *sound_state);
+internal_func void DestroyAudio(AudioSystem *audio_system);
+
+
+void *PlatformReadEntireFile(char *filename){
+    void *file_buffer = NULL;
+    SDL_IOStream *file_handle = NULL;
+    // get file stream/handle
+    file_handle = SDL_IOFromFile(filename, "r");
+    if (!file_handle) {
+        SDL_Log("error getting file handle for '%s'", filename);
+        return NULL;
+    }
+
+    // Get the file size
+    Sint64 size = SDL_GetIOSize(file_handle);
+    if (size <= 0) {
+        SDL_Log("file size invalid for '%s'", filename);
+        SDL_CloseIO(file_handle);
+        return NULL;
+    }
+
+    // allocate memory for the file
+    file_buffer = SDL_malloc((size_t)size);
+    if (!file_buffer) {
+        SDL_Log("error allocating memory for the file_buffer");
+        SDL_CloseIO(file_handle);
+        return NULL;
+    }
+
+    // read the file
+    size_t bytesRead = SDL_ReadIO(file_handle, file_buffer, (size_t)size);
+    if (bytesRead != (size_t)size) {
+        SDL_Log("Failed to read entire file '%s'", filename);
+        SDL_free(file_buffer);
+        file_buffer = NULL;
+    } else {
+        SDL_Log("Read entire file '%s' successfully", filename);
+    }
+
+    SDL_CloseIO(file_handle);
+    return file_buffer;
+}
+
+void PlatformFreeFileMemory(void *memory){
+    SDL_free(memory);
+}
+bool32 PlatformWriteEntireFile(char *filename, uint32 memory_size, void *memory){
+    return true;
+}
 
 bool InitGameMemory(){
     game_memory.permanent_storage_size = Megabytes(64);
@@ -274,7 +326,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result){
     SDL_Quit();
 }
 
-void ResizeRenderBuffer(RenderBuffer *render_buffer, uint32 width, uint32 height){
+internal_func void ResizeRenderBuffer(RenderBuffer *render_buffer, uint32 width, uint32 height){
     
     // Free old buffer if it exists
     if (render_buffer->pixels) {
@@ -316,7 +368,7 @@ void ResizeRenderBuffer(RenderBuffer *render_buffer, uint32 width, uint32 height
     }
 }
 
-bool InitAudio(AudioSystem *audio_system, SoundState *sound_state){
+internal_func bool InitAudio(AudioSystem *audio_system, SoundState *sound_state){
 
     audio_spec.format = SDL_AUDIO_F32;   // 32-bit float audio
     audio_spec.channels = SOUND_CHANNELS;
@@ -357,7 +409,7 @@ bool InitAudio(AudioSystem *audio_system, SoundState *sound_state){
     return true;
 }
 
-void DestroyAudio(AudioSystem *audio_system) {
+internal_func void DestroyAudio(AudioSystem *audio_system) {
     if (audio_stream) {
         // Pause audio playback before destroying the stream
         SDL_PauseAudioDevice(SDL_GetAudioStreamDevice(audio_stream));
@@ -372,12 +424,12 @@ void DestroyAudio(AudioSystem *audio_system) {
 }
 
 
-static void UpdateButton(ButtonState *oldBState, ButtonState *newBState, bool isDown){
+internal_func void UpdateButton(ButtonState *oldBState, ButtonState *newBState, bool isDown){
     newBState->ended_down = isDown;
     newBState->half_transition_count = (oldBState->ended_down != isDown) ? 1 : 0;
 }
 
-static void ProcessKeyboardEvent(SDL_KeyboardEvent *e) {
+internal_func void ProcessKeyboardEvent(SDL_KeyboardEvent *e) {
     SDL_Scancode sc = e->scancode;
     bool isDown = (e->type == SDL_EVENT_KEY_DOWN);
     switch (sc) {
@@ -404,7 +456,7 @@ static void ProcessKeyboardEvent(SDL_KeyboardEvent *e) {
     }
 }
 
-static void ProcessControllerButton(SDL_GamepadButtonEvent *e) {
+internal_func void ProcessControllerButton(SDL_GamepadButtonEvent *e) {
     if (!controller) return;
     bool isDown = (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
     switch (e->button) {
@@ -435,7 +487,7 @@ static void ProcessControllerButton(SDL_GamepadButtonEvent *e) {
     }
 }
 
-static void ProcessControllerAxis(SDL_GamepadAxisEvent *e) {
+internal_func void ProcessControllerAxis(SDL_GamepadAxisEvent *e) {
     if (!controller) return;
     
     float32 val = NormalizeStickValue(e->value);
@@ -478,7 +530,7 @@ static void ProcessControllerAxis(SDL_GamepadAxisEvent *e) {
 
 }
 
-static float NormalizeStickValue(int16 raw){
+internal_func float NormalizeStickValue(int16 raw){
     // normalize the value
     if (raw < 0) {
         return (float)raw / 32768.0f;   // maps -32768 -> -1.0

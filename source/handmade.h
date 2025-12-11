@@ -4,6 +4,10 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#define internal_func        static
+#define local_persist   static
+#define global_variable static
+
 #define Kilobytes(Value) ((Value) * 1024LL)
 #define Megabytes(Value) (Kilobytes(Value) * 1024LL)
 #define Gigabytes(Value) (Megabytes(Value) * 1024LL)
@@ -93,12 +97,17 @@ typedef struct{
     uint32 counter;
 } GameState;
 
+// DEBUG PLATFORM IO functions
+void *PlatformReadEntireFile(char *filename);
+void PlatformFreeFileMemory(void *memory);
+bool32 PlatformWriteEntireFile(char *filename, uint32 memory_size, void *memory);
+
 // platform independent functions
 void GameUpdateAndRender(GameMemory *game_memory, RenderBuffer *buffer, float t, AudioSystem *audio_system, SoundState *sound_state, bool soundBufferNeedsFilling,
                         GameInputState *input);
 
-void UpdatePixels(RenderBuffer *buffer,float t);
-void UpdateAudio(AudioSystem *audio_system, SoundState *sound_state);
-void GenerateSineWave(AudioSystem *audio_system, SoundState *sound_state);
+internal_func void UpdatePixels(RenderBuffer *buffer,float t);
+internal_func void UpdateAudio(AudioSystem *audio_system, SoundState *sound_state);
+internal_func void GenerateSineWave(AudioSystem *audio_system, SoundState *sound_state);
 // void GenerateSquareWave(AudioSystem *audio_system, SoundState *sound_state);
-static void UpdateGameInput(GameInputState *input);
+internal_func void UpdateGameInput(GameInputState *input);

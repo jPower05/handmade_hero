@@ -1,14 +1,29 @@
+
 #include "handmade.h"
 #define PI 3.14159265358979323846
 
-const char *button_names[6] = {
+global_variable char *button_names[6] = {
     "moveUp", "moveDown", "moveLeft", "moveRight", "actionA", "actionB"
 };
+
 
 void GameUpdateAndRender(GameMemory *game_memory, RenderBuffer *buffer,float t, AudioSystem *audio_system, SoundState *sound_state, bool soundBufferNeedsFilling,
                         GameInputState *input){
     GameState *game_state = (GameState *)game_memory->permanent_storage;
+    
     if(!game_memory->is_inititialized){
+
+        // file loading
+        char filename[64] = "test.txt";
+        void *bitmap_memory = PlatformReadEntireFile(filename);
+        if(bitmap_memory == NULL){
+            printf("error bitch\n");
+        }
+        if(bitmap_memory){
+            printf("success");
+            PlatformFreeFileMemory(bitmap_memory);
+        }
+
         game_state->counter = 0;
         game_memory->is_inititialized = true;
     }
@@ -20,7 +35,7 @@ void GameUpdateAndRender(GameMemory *game_memory, RenderBuffer *buffer,float t, 
     }
 }
 
-void UpdatePixels(RenderBuffer *buffer, float t){
+internal_func void UpdatePixels(RenderBuffer *buffer, float t){
     // write directly to the buffers pixels
 
     uint32 height = buffer->height;
@@ -40,12 +55,12 @@ void UpdatePixels(RenderBuffer *buffer, float t){
     }
 }
 
-void UpdateAudio(AudioSystem *audio_system, SoundState *sound_state) {
+internal_func void UpdateAudio(AudioSystem *audio_system, SoundState *sound_state) {
     GenerateSineWave(audio_system, sound_state);
     //GenerateSquareWave(audio_system, sound_state);
 }
 
-void GenerateSineWave(AudioSystem *audio_system, SoundState *sound_state){
+internal_func void GenerateSineWave(AudioSystem *audio_system, SoundState *sound_state){
     uint32 frames = audio_system->frames_per_buffer;
     float *samples = audio_system->sound_buffer;
     // Generate a simple sine wave
@@ -94,7 +109,7 @@ void GenerateSineWave(AudioSystem *audio_system, SoundState *sound_state){
         newBState->half_transition_count = 0 (no change)
 
 */
-static void UpdateGameInput(GameInputState *input){
+internal_func void UpdateGameInput(GameInputState *input){
 
     
     for (int i = 0; i < 6; ++i) {   // 6 buttons in your union array
