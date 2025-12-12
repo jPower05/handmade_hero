@@ -15,6 +15,8 @@
 // ------------------------------------------------------------
 // Globals
 // ------------------------------------------------------------
+// global flag
+global_variable bool app_is_quitting = false;
 global_variable GameMemory game_memory = {0};
 
 global_variable SDL_Window *window = NULL;
@@ -134,7 +136,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
 
     char cwd[1000];
     getcwd(cwd, sizeof(cwd));
-    printf("Current working directory: %s\n", cwd);
+    SDL_Log("Current working directory: %s\n", cwd);
 
     uint32 init_height = 480;
     uint32 init_width = 640;
@@ -216,7 +218,16 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 
         }
         break;
+        case SDL_EVENT_WINDOW_CLOSE_REQUESTED:{  // macOS close button
+            app_is_quitting = true;
+            SDL_Log("Window close requested -> exiting.");
+            return SDL_APP_SUCCESS;
+        }
+        break;
+
         case SDL_EVENT_QUIT:{
+            app_is_quitting = true;
+            SDL_Log("SDL_EVENT_QUIT -> exiting.");
             return SDL_APP_SUCCESS;
         }
         break;
@@ -246,6 +257,13 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 
 // --- Called once per frame (your main loop logic goes here) ---
 SDL_AppResult SDL_AppIterate(void *appstate){
+
+    // If a quit was requested, return success immediately — do not run any frame work.
+    if (app_is_quitting) {
+        // Log once if you want:
+        SDL_Log("App iterate: quitting flag set, exiting iterate.");
+        return SDL_APP_SUCCESS;
+    }
 
     // timing
     uint64 now = SDL_GetPerformanceCounter();
@@ -302,9 +320,11 @@ SDL_AppResult SDL_AppIterate(void *appstate){
 
 // --- Called once on shutdown ---
 void SDL_AppQuit(void *appstate, SDL_AppResult result){
+    app_is_quitting = true;
     SDL_Log("Cleaning up...");
 
     DestroyAudio(&audio_system);
+
     if (texture) {
         SDL_DestroyTexture(texture);
         texture = NULL;
@@ -331,8 +351,6 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result){
         game_memory.permanent_storage = NULL;
         game_memory.transient_storage = NULL; 
     }
-
-    SDL_Quit();
 }
 
 internal_func void ResizeRenderBuffer(RenderBuffer *render_buffer, uint32 width, uint32 height){
@@ -420,15 +438,23 @@ internal_func bool InitAudio(AudioSystem *audio_system, SoundState *sound_state)
 
 internal_func void DestroyAudio(AudioSystem *audio_system) {
     if (audio_stream) {
-        // Pause audio playback before destroying the stream
-        SDL_PauseAudioDevice(SDL_GetAudioStreamDevice(audio_stream));
+        // Pause the stream device (if available) to stop callbacks/processing
+        int device = SDL_GetAudioStreamDevice(audio_stream);
+        if (device >= 0) {
+            SDL_PauseAudioDevice(device);
+        }
+
+        // Destroy the audio stream
         SDL_DestroyAudioStream(audio_stream);
         audio_stream = NULL;
     }
-    if (audio_system->sound_buffer) {
+
+    // Free our buffers
+    if (audio_system && audio_system->sound_buffer) {
         SDL_free(audio_system->sound_buffer);
         audio_system->sound_buffer = NULL;
     }
+
     SDL_Log("Audio system cleaned up");
 }
 
