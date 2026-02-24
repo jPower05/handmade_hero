@@ -37,10 +37,11 @@ global_variable uint64 last_counter = 0;
 global_variable double64 dt = 0;
 global_variable double64 t_total = 0;
 global_variable uint64 perf_freq = 0;
+global_variable double64 target_seconds_per_frame = 1.0 / 60.0;
 
-// input
-global_variable GameInputState input = {0};
-global_variable GameInputState input_prev = {0};
+
+static GameInputState oldInput = {0};
+
 
 // ------------------------------------------------------------
 // Function Declarations
@@ -48,11 +49,10 @@ global_variable GameInputState input_prev = {0};
 internal_func bool InitGameMemory();
 
 // game controller input
-internal_func void UpdateButton(ButtonState *oldBState, ButtonState *newBState, bool isDown);
-internal_func void ProcessKeyboardEvent(SDL_KeyboardEvent *e);
-internal_func void ProcessControllerButton(SDL_GamepadButtonEvent *e);
-internal_func void ProcessControllerAxis(SDL_GamepadAxisEvent *e);
-internal_func float NormalizeStickValue(int16 val);
+internal_func void SetButtonState(ButtonState *oldBState, ButtonState *newBState, bool isDown);
+internal_func void ProcessKeyboardEvent(GameInputState *oldInput, GameInputState *newInput, SDL_KeyboardEvent *e);
+internal_func void ProcessControllerButton(GameInputState *oldInput, GameInputState *newInput, SDL_GamepadButtonEvent *e);
+internal_func void ProcessControllerAxis(GameInputState *newInput, SDL_GamepadAxisEvent *e);
 
 // audio and rendering
 
@@ -151,7 +151,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
         return SDL_APP_FAILURE; 
     }
     
-    window = SDL_CreateWindow("Handmade Hero", init_width, init_height, SDL_WINDOW_RESIZABLE);
+    window = SDL_CreateWindow("Handmade Hero", init_width, init_height, SDL_WINDOW_RESIZABLE | SDL_WINDOW_INPUT_FOCUS);
 
     // Initialize audio
     sound_state.frequency = 256.0f;  // A4 note
@@ -175,7 +175,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
     perf_start = SDL_GetPerformanceCounter();
     last_counter = perf_start;
 
-    SDL_Log("High precision timer freq = %llu Hz", (uint64)perf_freq);
+    SDL_Log("High precision timer freq = %lu Hz", (uint64)perf_freq);
 
     // --- Gamepad initialization ---
     int count = 0;
@@ -198,26 +198,38 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]){
     }
 
     // stick defaults
-    input.start_x = 0.0f;
-    input.start_y = 0.0f;
-    input.end_x = 0.0f;
-    input.end_y = 0.0f;
+    oldInput.start_x = 0.0f;
+    oldInput.start_y = 0.0f;
+    oldInput.end_x = 0.0f;
+    oldInput.end_y = 0.0f;
 
-    input.min_x = input.min_y = 9999.0f;
-    input.max_x = input.max_y = -9999.0f;
+    oldInput.min_x = oldInput.min_y = 9999.0f;
+    oldInput.max_x = oldInput.max_y = -9999.0f;
     
     SDL_Log("SDL initialized and window created");
     return SDL_APP_CONTINUE;
 }
 
 // --- Called every time there’s an event (key press, mouse, etc.) ---
-SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
-{
+SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event){
     switch(event->type){
         case SDL_EVENT_MOUSE_MOTION:{
 
         }
         break;
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_KEY_UP:
+            ProcessKeyboardEvent(&oldInput, &oldInput, &event->key);
+            break;
+
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+            ProcessControllerButton(&oldInput, &oldInput, &event->gbutton);
+            break;
+
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+            ProcessControllerAxis(&oldInput, &event->gaxis);
+            break;
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:{  // macOS close button
             app_is_quitting = true;
             SDL_Log("Window close requested -> exiting.");
@@ -237,17 +249,6 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
             ResizeRenderBuffer(&render_buffer, width, height);
         }
         break;
-        case SDL_EVENT_KEY_DOWN:
-        case SDL_EVENT_KEY_UP:
-            ProcessKeyboardEvent(&event->key);
-        break;
-        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-        case SDL_EVENT_GAMEPAD_BUTTON_UP:
-            ProcessControllerButton(&event->gbutton);
-        break;
-        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-            ProcessControllerAxis(&event->gaxis);
-        break;
         default:{
             break;
         }
@@ -266,34 +267,11 @@ SDL_AppResult SDL_AppIterate(void *appstate){
     }
 
     // timing
-    uint64 now = SDL_GetPerformanceCounter();
+    uint64 frame_start = SDL_GetPerformanceCounter();
 
-    dt = (double64)(now - last_counter) / (double64)perf_freq;
-    last_counter = now;
-
-    t_total = (double64)(now - perf_start) / (double64)perf_freq;
-
-    // Debug output
-    // static uint32 frame_count = 0;
-    // if (++frame_count % 60 == 0) {
-    //     SDL_Log("FPS: %.1f   dt: %.6f   t_total: %.2f",
-    //         1.0 / dt, dt, t_total);
-    // }
-
-    // Exit automatically after 5 seconds
-    if (t_total > 100) {
-        SDL_Log("Timeout reached, exiting...");
-        return SDL_APP_SUCCESS;
-    }
-
-    input.is_analog = false;
-
-    // copy analog values for next frame
-    input.start_x = input.end_x;
-    input.start_y = input.end_y;
 
     // determine if stick is currently moved outside deadzone
-    input.is_analog = (fabsf(input.end_x) >= STICK_DEADZONE || fabsf(input.end_y) >= STICK_DEADZONE);
+    oldInput.is_analog = (fabsf(oldInput.end_x) >= STICK_DEADZONE || fabsf(oldInput.end_y) >= STICK_DEADZONE);
 
     // Determine how much audio is currently queued in the stream
     uint32 queued_bytes = SDL_GetAudioStreamAvailable(audio_stream);
@@ -301,7 +279,8 @@ SDL_AppResult SDL_AppIterate(void *appstate){
 
     soundBufferNeedsFilling = (queued_bytes < target_bytes);
 
-    GameUpdateAndRender(&game_memory, &render_buffer, (float32) t_total, &audio_system, &sound_state, soundBufferNeedsFilling, &input);
+    GameUpdateAndRender(&game_memory, &render_buffer, (float32) t_total, &audio_system, 
+        &sound_state, soundBufferNeedsFilling, &oldInput);
 
     if(soundBufferNeedsFilling){
         SDL_PutAudioStreamData(audio_stream, audio_system.sound_buffer, audio_system.buffer_size);
@@ -312,8 +291,29 @@ SDL_AppResult SDL_AppIterate(void *appstate){
     SDL_RenderTexture(renderer, texture, NULL, NULL);
     SDL_RenderPresent(renderer);
 
-    // Copy current input to previous at the start of the frame
-    input_prev = input;
+    // frame timing
+    uint64 frame_end = SDL_GetPerformanceCounter();
+    double64 elapsed_seconds = (double64)(frame_end - frame_start) / (double64)perf_freq;
+
+    if(elapsed_seconds < target_seconds_per_frame){
+        double64 sleep_seconds = target_seconds_per_frame - elapsed_seconds;
+        uint32 sleep_ms = (uint32)(sleep_seconds * 1000.0);
+        if(sleep_ms > 0) {
+            SDL_Delay(sleep_ms);
+        }   
+        // spin waiting for the rest of the frame time to elapse as SDL_Delay is not perfectly accurate
+        while (elapsed_seconds < target_seconds_per_frame){
+            uint64 now = SDL_GetPerformanceCounter();
+            elapsed_seconds = (double64)(now - frame_start) / (double64)perf_freq;
+        }
+    }
+
+    // Final frame timing
+    uint64 final_counter = SDL_GetPerformanceCounter();
+    dt = (double64)(final_counter - last_counter) / (double64)perf_freq;
+    last_counter = final_counter;
+
+    t_total += dt;
     
     return SDL_APP_CONTINUE;
 }
@@ -459,117 +459,57 @@ internal_func void DestroyAudio(AudioSystem *audio_system) {
 }
 
 
-internal_func void UpdateButton(ButtonState *oldBState, ButtonState *newBState, bool isDown){
+internal_func void SetButtonState(ButtonState *oldBState, ButtonState *newBState, bool isDown){
     newBState->ended_down = isDown;
     newBState->half_transition_count = (oldBState->ended_down != isDown) ? 1 : 0;
 }
 
-internal_func void ProcessKeyboardEvent(SDL_KeyboardEvent *e) {
-    SDL_Scancode sc = e->scancode;
+internal_func void ProcessKeyboardEvent(GameInputState *oldInput,
+                                        GameInputState *newInput,
+                                        SDL_KeyboardEvent *e){
     bool isDown = (e->type == SDL_EVENT_KEY_DOWN);
-    switch (sc) {
-    case SDL_SCANCODE_W:
-        UpdateButton(&input_prev.move_up, &input.move_up, isDown);
-        break;
-    case SDL_SCANCODE_S:
-        UpdateButton(&input_prev.move_down, &input.move_down, isDown);
-        break;
-    case SDL_SCANCODE_A:
-        UpdateButton(&input_prev.move_left, &input.move_left, isDown);
-        break;
-    case SDL_SCANCODE_D:
-        UpdateButton(&input_prev.move_right, &input.move_right, isDown);
-        break;
-    case SDL_SCANCODE_Q:
-        UpdateButton(&input_prev.action_A, &input.action_A, isDown);
-        break;
-    case SDL_SCANCODE_E:
-        UpdateButton(&input_prev.action_B, &input.action_B, isDown);
-        break;
-    default:
-        break;
+
+    switch (e->scancode){
+        case SDL_SCANCODE_W: SetButtonState(&oldInput->move_up, &newInput->move_up, isDown); break;
+        case SDL_SCANCODE_S: SetButtonState(&oldInput->move_down, &newInput->move_down, isDown); break;
+        case SDL_SCANCODE_A: SetButtonState(&oldInput->move_left, &newInput->move_left, isDown); break;
+        case SDL_SCANCODE_D: SetButtonState(&oldInput->move_right, &newInput->move_right, isDown); break;
+        case SDL_SCANCODE_Q: SetButtonState(&oldInput->action_A, &newInput->action_A, isDown); break;
+        case SDL_SCANCODE_E: SetButtonState(&oldInput->action_B, &newInput->action_B, isDown); break;
+        default: break;
     }
 }
 
-internal_func void ProcessControllerButton(SDL_GamepadButtonEvent *e) {
-    if (!controller) return;
+internal_func void ProcessControllerButton(GameInputState *oldInput,
+                                           GameInputState *newInput,
+                                           SDL_GamepadButtonEvent *e){
     bool isDown = (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
-    switch (e->button) {
-        case SDL_GAMEPAD_BUTTON_LABEL_A:{
-            UpdateButton(&input_prev.action_A, &input.action_A, isDown); 
-        } 
-        break;
-        case SDL_GAMEPAD_BUTTON_LABEL_B:{
-            UpdateButton(&input_prev.action_B, &input.action_B, isDown);
-        } 
-        break;
-        case SDL_GAMEPAD_BUTTON_DPAD_UP:{
-            UpdateButton(&input_prev.move_up, &input.move_up, isDown);
-        }
-        break;
-        case SDL_GAMEPAD_BUTTON_DPAD_DOWN:{
-            UpdateButton(&input_prev.move_down, &input.move_down, isDown);
-        }
-        break;
-        case SDL_GAMEPAD_BUTTON_DPAD_LEFT:{
-            UpdateButton(&input_prev.move_left, &input.move_left, isDown);
-        }  
-        break;
-        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:{
-            UpdateButton(&input_prev.move_right, &input.move_right, isDown);
-        } 
-        break;
+
+    switch (e->button){
+        case SDL_GAMEPAD_BUTTON_DPAD_UP: SetButtonState(&oldInput->move_up, &newInput->move_up, isDown); break;
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: SetButtonState(&oldInput->move_down, &newInput->move_down, isDown); break;
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT: SetButtonState(&oldInput->move_left, &newInput->move_left, isDown); break;
+        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: SetButtonState(&oldInput->move_right, &newInput->move_right, isDown); break;
+        case SDL_GAMEPAD_BUTTON_SOUTH: SetButtonState(&oldInput->action_A, &newInput->action_A, isDown); break;
+        case SDL_GAMEPAD_BUTTON_EAST: SetButtonState(&oldInput->action_B, &newInput->action_B, isDown); break;
+        default: break;
     }
 }
 
-internal_func void ProcessControllerAxis(SDL_GamepadAxisEvent *e) {
-    if (!controller) return;
-    
-    float32 val = NormalizeStickValue(e->value);
 
-    if (fabsf(val) < STICK_DEADZONE){
-        val = 0.0f;
-    } else {
-        //SDL_Log("Gamepad axis %d raw=%d norm=%.4f", e->axis, e->value, val);
+internal_func void ProcessControllerAxis(GameInputState *newInput,
+                                         SDL_GamepadAxisEvent *e){
+    const float deadzone = STICK_DEADZONE;
+
+    if (e->axis == SDL_GAMEPAD_AXIS_LEFTX){
+        float value = e->value / 32767.0f;
+        newInput->is_analog = true;
+        newInput->end_x = (fabsf(value) > deadzone) ? value : 0.0f;
     }
-
-    
-
-    switch(e->axis){
-        case SDL_GAMEPAD_AXIS_LEFTX:
-            input.end_x = val;
-
-            if (val < input.min_x) input.min_x = val;
-            if (val > input.max_x) input.max_x = val;
-            break;
-
-        case SDL_GAMEPAD_AXIS_LEFTY:
-            input.end_y = val;
-
-            if (val < input.min_y) input.min_y = val;
-            if (val > input.max_y) input.max_y = val;
-            break;
-    }
-
-
-    // using sticks like dpad
-    bool up    = (input.end_y < -0.5f);
-    bool down  = (input.end_y >  0.5f);
-    bool left  = (input.end_x < -0.5f);
-    bool right = (input.end_x >  0.5f);
-
-    UpdateButton(&input_prev.move_up,    &input.move_up,    up);
-    UpdateButton(&input_prev.move_down,  &input.move_down,  down);
-    UpdateButton(&input_prev.move_left,  &input.move_left,  left);
-    UpdateButton(&input_prev.move_right, &input.move_right, right);
-
-}
-
-internal_func float NormalizeStickValue(int16 raw){
-    // normalize the value
-    if (raw < 0) {
-        return (float)raw / 32768.0f;   // maps -32768 -> -1.0
-    } else {
-        return (float)raw / 32767.0f;   // maps  32767 ->  1.0
+    else if (e->axis == SDL_GAMEPAD_AXIS_LEFTY){
+        float value = e->value / 32767.0f;
+        newInput->is_analog = true;
+        newInput->end_y = (fabsf(value) > deadzone) ? -value : 0.0f;
     }
 }
+

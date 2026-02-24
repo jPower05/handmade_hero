@@ -2,13 +2,22 @@
 #include "handmade.h"
 #define PI 3.14159265358979323846
 
+internal_func void UpdatePixels(RenderBuffer *buffer, GameState *game_state);
+internal_func void DrawCheckerboard(RenderBuffer *buffer, float32 x_offset, float32 y_offset);
+internal_func void UpdateAudio(AudioSystem *audio_system, SoundState *sound_state);
+internal_func void GenerateSineWave(AudioSystem *audio_system, SoundState *sound_state);
+// void GenerateSquareWave(AudioSystem *audio_system, SoundState *sound_state);
+internal_func void UpdateGameInput(GameInputState *input, GameState *game_state);
+
 global_variable char *button_names[6] = {
     "moveUp", "moveDown", "moveLeft", "moveRight", "actionA", "actionB"
 };
 
 
-void GameUpdateAndRender(GameMemory *game_memory, RenderBuffer *buffer,float t, AudioSystem *audio_system, SoundState *sound_state, bool soundBufferNeedsFilling,
-                        GameInputState *input){
+void GameUpdateAndRender(GameMemory *game_memory, RenderBuffer *buffer, float t, 
+    AudioSystem *audio_system, SoundState *sound_state, bool soundBufferNeedsFilling,
+        GameInputState *input){
+    // cast the permanent storage to a game state struct so we can use it
     GameState *game_state = (GameState *)game_memory->permanent_storage;
     
     if(!game_memory->is_inititialized){
@@ -27,30 +36,65 @@ void GameUpdateAndRender(GameMemory *game_memory, RenderBuffer *buffer,float t, 
         game_state->counter = 0;
         game_memory->is_inititialized = true;
     }
-    UpdatePixels(buffer,t);
-    UpdateGameInput(input);
+    UpdatePixels(buffer, game_state);
+    UpdateGameInput(input, game_state);
 
     if(soundBufferNeedsFilling){
         UpdateAudio(audio_system, sound_state);
     }
 }
 
-internal_func void UpdatePixels(RenderBuffer *buffer, float t){
+internal_func void UpdatePixels(RenderBuffer *buffer, GameState *game_state){
     // write directly to the buffers pixels
+    DrawCheckerboard(buffer, game_state->x_offset, game_state->y_offset);
 
+    // uint32 height = buffer->height;
+    // uint32 width = buffer->width;
+    // uint32 *pixels = (uint32 *)buffer->pixels;
+
+    // for(uint32 y = 0; y < height; ++y){
+    //     uint32 *row = (uint32 *)pixels + (y * width); // pointer to the start of the current row
+    //     for(uint32 x = 0; x < width; ++x){
+    //         uint8 red = (uint8)((sin((x + t *100) * 0.01f) * 0.5f + 0.5f) *255);
+    //         uint8 blue = (uint8)((sin((x + y + t *100) * 0.01f) * 0.5f + 0.5f) *255);
+    //         uint8 green = (uint8)((sin((y + t *100) * 0.01f) * 0.5f + 0.5f) *255);;
+    //         uint8 alpha = 255;
+    //         // dereference the pointer to set the pixel value
+    //         *(row + x) = blue | (green << 8) | (red << 16) | (alpha << 24);
+    //     }
+    // }
+}
+
+internal_func void DrawCheckerboard(RenderBuffer *buffer, float32 x_offset, float32 y_offset){
     uint32 height = buffer->height;
     uint32 width = buffer->width;
     uint32 *pixels = (uint32 *)buffer->pixels;
 
-    for(uint32 y = 0; y < height; ++y){
+    const int tileSize = 60;
+
+    for (uint32 y = 0; y < height; ++y) {
         uint32 *row = (uint32 *)pixels + (y * width); // pointer to the start of the current row
-        for(uint32 x = 0; x < width; ++x){
-            uint8 red = (uint8)((sin((x + t *100) * 0.01f) * 0.5f + 0.5f) *255);
-            uint8 blue = (uint8)((sin((x + y + t *100) * 0.01f) * 0.5f + 0.5f) *255);
-            uint8 green = (uint8)((sin((y + t *100) * 0.01f) * 0.5f + 0.5f) *255);;
+        float fy = (float)y + y_offset;
+        uint32 tileY = (uint32)floorf(fy / tileSize);; // convert y coordinate to tile index
+        for (uint32 x = 0; x < width; ++x) {
+            float fx = (float)x + x_offset;
+            uint32 tileX = (uint32)floorf(fx / tileSize);   // convert x coordinate to tile index
+            bool evenTile = (tileX + tileY) % 2 == 0;
+            // Determine which color to use based on the tile position
+            uint8 red, green, blue;
             uint8 alpha = 255;
-            // dereference the pointer to set the pixel value
-            *(row + x) = blue | (green << 8) | (red << 16) | (alpha << 24);
+
+            if (evenTile){
+                red   = 30;
+                green = 30;
+                blue  = 30;
+            }
+            else{
+                red   = 200;
+                green = 200;
+                blue  = 200;
+            }
+            *(row + x) = blue | (green << 8) | (red << 16) | (alpha << 24); 
         }
     }
 }
@@ -109,9 +153,25 @@ internal_func void GenerateSineWave(AudioSystem *audio_system, SoundState *sound
         newBState->half_transition_count = 0 (no change)
 
 */
-internal_func void UpdateGameInput(GameInputState *input){
+internal_func void UpdateGameInput(GameInputState *input, GameState *game_state){
 
-    
+    // movement speed in pixels per frame
+    const float32 speed = 5.0f;
+
+    // check directional buttons
+    if(input->move_up.ended_down){
+        game_state->y_offset -= speed;
+    }
+    if(input->move_down.ended_down){
+        game_state->y_offset += speed;
+    }
+    if(input->move_left.ended_down){
+        game_state->x_offset -= speed;
+    }
+    if(input->move_right.ended_down){
+        game_state->x_offset += speed;
+    }
+
     for (int i = 0; i < 6; ++i) {   // 6 buttons in your union array
         ButtonState *btn = &input->keys[i];
 

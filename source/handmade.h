@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#define internal_func        static
+#define internal_func   static
 #define local_persist   static
 #define global_variable static
 
@@ -24,6 +24,7 @@ typedef uint64_t uint64;
 typedef uint8_t uint8;
 typedef uint16_t uint16;
 typedef int16_t int16;
+typedef int32_t int32;
 typedef uint8_t uint8;
 typedef bool bool32;
 typedef float float32;
@@ -97,6 +98,8 @@ typedef struct{
 
 typedef struct{
     uint32 counter;
+    float32 x_offset;
+    float32 y_offset;
 } GameState;
 
 // DEBUG PLATFORM IO functions
@@ -107,9 +110,3 @@ bool32 PlatformWriteEntireFile(char *filename, uint32 memory_size, void *memory)
 // platform independent functions
 void GameUpdateAndRender(GameMemory *game_memory, RenderBuffer *buffer, float t, AudioSystem *audio_system, SoundState *sound_state, bool soundBufferNeedsFilling,
                         GameInputState *input);
-
-internal_func void UpdatePixels(RenderBuffer *buffer,float t);
-internal_func void UpdateAudio(AudioSystem *audio_system, SoundState *sound_state);
-internal_func void GenerateSineWave(AudioSystem *audio_system, SoundState *sound_state);
-// void GenerateSquareWave(AudioSystem *audio_system, SoundState *sound_state);
-internal_func void UpdateGameInput(GameInputState *input);
